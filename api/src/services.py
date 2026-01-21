@@ -6,7 +6,7 @@ from urllib.parse import urljoin
 
 from sqlalchemy.orm import Session
 from minio import Minio
-from pymilvus import MilvusClient
+from pymilvus import MilvusClient, DataType
 
 from shared.models import Event, Camera
 
@@ -26,8 +26,7 @@ class SurveillanceServices:
         )
         # Initialize Milvus client
         self.milvus_client = MilvusClient(
-            host=os.environ.get("MILVUS_HOST"),
-            port=int(os.environ.get("MILVUS_PORT"))
+            uri=f"http://{os.environ.get('MILVUS_HOST')}:{os.environ.get('MILVUS_PORT')}"
         )
         # HLS base URL for playback
         self.hls_base_url = f"http://{os.environ.get('MINIO_ENDPOINT')}/hls/"
@@ -60,19 +59,27 @@ class SurveillanceServices:
         """
         try:
             if not self.milvus_client.has_collection("events"):
+                schema = self.milvus_client.create_schema(
+                    auto_id=False,
+                    enable_dynamic_field=True,
+                )
+                schema.add_field("event_id", DataType.VARCHAR, max_length=36, is_primary=True)
+                schema.add_field("embedding", DataType.FLOAT_VECTOR, dim=512)
+                schema.add_field("timestamp", DataType.INT64)
+                schema.add_field("camera_id", DataType.VARCHAR, max_length=255)
+
+                index_params = self.milvus_client.prepare_index_params()
+                index_params.add_index(
+                    field_name="embedding", 
+                    index_type="IVF_FLAT", 
+                    metric_type="L2",
+                    params={"nlist": 1024}
+                )
+
                 self.milvus_client.create_collection(
                     collection_name="events",
-                    schema={
-                        "fields": [
-                            {"name": "embedding", "type": "FLOAT_VECTOR", "params": {"dim": 512}},
-                            {"name": "event_id", "type": "VARCHAR", "params": {"max_length": 36}},
-                            {"name": "timestamp", "type": "INT64"},
-                            {"name": "camera_id", "type": "VARCHAR", "params": {"max_length": 255}},
-                        ]
-                    },
-                    index_params=[
-                        {"field": "embedding", "index_type": "IVF_FLAT", "metric_type": "L2"}
-                    ]
+                    schema=schema,
+                    index_params=index_params
                 )
                 logger.info("Created Milvus collection: events")
         except Exception as e:
@@ -149,6 +156,8 @@ class SurveillanceServices:
             return urljoin(self.hls_base_url, f"{camera.id}/live.m3u8")
         return None
 
-def get_surveillance_services():
-    db = Session()
+from fastapi import Depends
+from . import database
+
+def get_surveillance_services(db: Session = Depends(database.get_db)):
     return SurveillanceServices(db)

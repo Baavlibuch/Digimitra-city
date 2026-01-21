@@ -7,7 +7,7 @@ services:
   redpanda:
     image: redpandadata/redpanda:latest
     command:
-      - redpanda start --overprovisioned --smp 1 --memory 1G --reserve-memory 0M --check=false --node-id 0
+      - redpanda start --overprovisioned --smp 1 --memory 1G --reserve-memory 0M --check=false --node-id 0 --kafka-addr=0.0.0.0:9092 --advertise-kafka-addr=redpanda:9092
     ports:
       - "9092:9092"
       - "9644:9644"
@@ -16,7 +16,7 @@ services:
 
   redpanda-console:
     image: redpandadata/console:latest
-    depends_on: [redpanda]
+    depends_on: [ redpanda ]
     ports:
       - "8080:8080"
     environment:
@@ -28,7 +28,7 @@ services:
           adminApi:
             enabled: true
             urls: ["http://redpanda:9644"]
-    command: ["/bin/sh","-c","echo \"$CONSOLE_CONFIG_FILE\" > /tmp/config.yml; /app/console"]
+    command: [ "/bin/sh", "-c", "echo \"$CONSOLE_CONFIG_FILE\" > /tmp/config.yml; /app/console" ]
 
   minio:
     image: minio/minio:latest
@@ -67,12 +67,12 @@ services:
 
   milvus:
     image: milvusdb/milvus:v2.2.13
-    command: ["milvus", "run", "standalone"]
+    command: [ "milvus", "run", "standalone" ]
     environment:
       ETCD_ENDPOINTS: etcd:2379
       MINIO_ADDRESS: minio:9000
       <<: *default-env
-    depends_on: [etcd, minio]
+    depends_on: [ etcd, minio ]
     ports:
       - "19530:19530"
       - "9091:9091"
@@ -83,7 +83,7 @@ services:
     build:
       context: .
       dockerfile: ./api/Dockerfile
-    depends_on: [postgres, milvus, minio, redpanda]
+    depends_on: [ postgres, milvus, minio, redpanda ]
     environment:
       DATABASE_URL: postgresql+psycopg2://svc:svcpass@postgres:5432/eventsdb
       KAFKA_BOOTSTRAP: redpanda:9092
@@ -102,7 +102,8 @@ services:
     build:
       context: .
       dockerfile: ./stream-processor/Dockerfile
-    depends_on: [postgres, redpanda]
+      network: host
+    depends_on: [ postgres, redpanda ]
     environment:
       DATABASE_URL: postgresql+psycopg2://svc:svcpass@postgres:5432/eventsdb
       REDPANDA_BOOTSTRAP: redpanda:9092
@@ -120,14 +121,15 @@ services:
     build:
       context: .
       dockerfile: ./edge-agent/Dockerfile
-    depends_on: [redpanda, minio, milvus]
+      network: host
+    depends_on: [ redpanda, minio, milvus ]
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
               count: 1
-              capabilities: [gpu]
+              capabilities: [ gpu ]
     environment:
       VIDEO_DIR: /data/videos
       CHUNK_SECONDS: 10

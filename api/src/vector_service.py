@@ -28,7 +28,7 @@ class MilvusVectorService:
         # Collection configuration
         self.embedding_dim = 512  # X-CLIP embedding dimension
         self.index_type = "IVF_FLAT"
-        self.metric_type = "COSINE"
+        self.metric_type = "IP"
         self.nlist = 1024
         
         self.collection = None
@@ -65,6 +65,9 @@ class MilvusVectorService:
             
             # Load collection
             if self.collection:
+                if not self.collection.has_index():
+                     self.logger.info("Index missing, creating...")
+                     self._create_index()
                 self.collection.load()
                 self.logger.info(f"Collection loaded: {self.collection_name}")
                 return True
@@ -135,23 +138,26 @@ class MilvusVectorService:
                 schema=schema
             )
             
-            # Create index
-            index_params = {
-                "index_type": self.index_type,
-                "metric_type": self.metric_type,
-                "params": {"nlist": self.nlist}
-            }
-            
-            self.collection.create_index(
-                field_name="embedding",
-                index_params=index_params
-            )
+            self._create_index()
             
             self.logger.info(f"Created collection: {self.collection_name}")
             
         except Exception as e:
             self.logger.error(f"Error creating collection: {e}")
             raise
+
+    def _create_index(self):
+        # Create index
+        index_params = {
+            "index_type": self.index_type,
+            "metric_type": self.metric_type,
+            "params": {"nlist": self.nlist}
+        }
+        
+        self.collection.create_index(
+            field_name="embedding",
+            index_params=index_params
+        )
     
     def insert_embedding(self,
                         embedding_id: str,

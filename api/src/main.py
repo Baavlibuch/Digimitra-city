@@ -21,6 +21,7 @@ ai_service = AIService()
 
 @app.on_event("startup")
 def startup_event():
+    database.create_tables()
     db = next(database.get_db())
     service_instance = services.SurveillanceServices(db)
     service_instance.initialize_services()

@@ -1,5 +1,5 @@
-from src.schemas import AIRequest
-from src.vector_service import VectorService
+from .schemas import AIRequest
+from .vector_service import MilvusVectorService as VectorService
 
 # In a real app, you'd initialize these services with proper configuration
 vector_service = VectorService()
