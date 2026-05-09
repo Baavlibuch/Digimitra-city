@@ -1,13 +1,13 @@
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { MainLayout } from '@/components/layout';
-import { mockCameras, mockEvents } from '@/lib/mock-data';
 import { AlertTriangle, Bot, Map, Search, Video } from 'lucide-react';
 import Link from 'next/link';
 
-export default function Dashboard() {
-  const activeCameras = mockCameras.filter(c => c.status === 'active').length;
-  const highSeverityAlerts = mockEvents.filter(e => e.severity === 'high').length;
+export default async function Dashboard() {
+  const cameras: Array<{ id: string }> = [];
+  const activeCameras = 0;
+  const highSeverityAlerts = 0;
 
   return (
     <MainLayout>
@@ -48,7 +48,7 @@ export default function Dashboard() {
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold">{activeCameras}</div>
-                <p className="text-xs text-muted-foreground">of {mockCameras.length} online</p>
+                <p className="text-xs text-muted-foreground">of {cameras.length} configured</p>
               </CardContent>
             </Card>
             <Card>

@@ -1,8 +1,21 @@
-from src.schemas import AIRequest
-from src.vector_service import VectorService
+from .schemas import AIRequest
+import logging
+import os
 
-# In a real app, you'd initialize these services with proper configuration
-vector_service = VectorService()
+logger = logging.getLogger(__name__)
+
+VECTOR_FEATURES_ENABLED = os.environ.get("ENABLE_VECTOR_FEATURES", "false").lower() == "true"
+
+if VECTOR_FEATURES_ENABLED:
+    try:
+        from .vector_service import MilvusVectorService as VectorService
+        vector_service = VectorService()
+    except Exception as e:
+        vector_service = None
+        logger.warning(f"Milvus unavailable, vector search disabled: {e}")
+else:
+    vector_service = None
+    logger.info("Milvus unavailable, vector search disabled")
 
 class AIService:
     def __init__(self):

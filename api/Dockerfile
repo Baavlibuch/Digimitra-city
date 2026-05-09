@@ -8,6 +8,4 @@ COPY ./api/requirements.txt /app/api/requirements.txt
 
 RUN pip install --no-cache-dir -r /app/api/requirements.txt
 
-WORKDIR /app/api
-
-CMD ["python", "src/main.py"]
+CMD ["uvicorn", "api.src.main:app", "--host", "0.0.0.0", "--port", "8000"]

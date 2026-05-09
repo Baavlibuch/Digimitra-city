@@ -1,5 +1,6 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, Literal
+from datetime import datetime
 
 # --- Token Schemas ---
 class Token(BaseModel):
@@ -27,18 +28,35 @@ class User(UserBase):
 # --- Camera Schemas ---
 class CameraBase(BaseModel):
     name: str
-    location: str
+    location: Optional[str] = None
+    type: str = "surveillance"
+    source_type: Literal["webcam", "cctv"]
+    room_name: str
+    stream_status: Literal["offline", "connecting", "online", "error"] = "offline"
     latitude: Optional[float] = None
     longitude: Optional[float] = None
 
 class CameraCreate(CameraBase):
-    pass
+    rtsp_url: Optional[str] = None
+    username: Optional[str] = None
+    password: Optional[str] = None
+    ip_address: Optional[str] = None
+    port: Optional[str] = None
+    channel: Optional[str] = None
 
 class Camera(CameraBase):
     id: str
+    created_at: datetime
 
     class Config:
         orm_mode = True
+
+
+class CameraUpdate(BaseModel):
+    name: Optional[str] = None
+    location: Optional[str] = None
+    stream_status: Optional[Literal["offline", "connecting", "online", "error"]] = None
+
 
 # --- AI Schemas ---
 class AIRequest(BaseModel):

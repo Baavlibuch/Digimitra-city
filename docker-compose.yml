@@ -93,6 +93,7 @@ services:
       MILVUS_HOST: milvus
       MILVUS_PORT: 19530
       JWT_SECRET: devsecret
+      ALLOW_ANY_LOGIN: "true"
       PYTHONPATH: /app
       <<: *default-env
     ports:

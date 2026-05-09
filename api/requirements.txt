@@ -5,3 +5,7 @@ minio
 pymilvus
 passlib[bcrypt]
 python-jose
+python-multipart
+uvicorn[standard]
+websockets
+wsproto

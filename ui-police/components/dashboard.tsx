@@ -17,6 +17,10 @@ import { Camera, AlertTriangle, Activity, MapPin, Search, Calendar, Mic } from "
 export function Dashboard() {
   const [activeSection, setActiveSection] = useState("dashboard")
   const [isLoading, setIsLoading] = useState(true)
+  const [cameraCount, setCameraCount] = useState(0)
+  const [onlineCount, setOnlineCount] = useState(0)
+  const [eventCount, setEventCount] = useState(0)
+  const [recentEvents, setRecentEvents] = useState<Array<{ id: string; type: string; camera: string; time: string }>>([])
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -26,17 +30,48 @@ export function Dashboard() {
     return () => clearTimeout(timer)
   }, [])
 
-  const stats = [
-    { label: "Active Cameras", value: "247", icon: Camera, status: "online" },
-    { label: "Live Alerts", value: "3", icon: AlertTriangle, status: "warning" },
-    { label: "System Status", value: "Operational", icon: Activity, status: "online" },
-    { label: "Coverage Areas", value: "12", icon: MapPin, status: "online" },
-  ]
+  useEffect(() => {
+    let cancelled = false
 
-  const recentEvents = [
-    { id: 1, type: "Motion Detected", camera: "Camera 24", time: "2 min ago", severity: "medium" },
-    { id: 2, type: "Unusual Activity", camera: "Camera 12", time: "5 min ago", severity: "high" },
-    { id: 3, type: "Person Loitering", camera: "Camera 8", time: "12 min ago", severity: "low" },
+    const syncCameraStats = async () => {
+      if (!navigator.mediaDevices?.enumerateDevices) {
+        setCameraCount(0)
+        setOnlineCount(0)
+        return
+      }
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices()
+        if (cancelled) return
+        const cameraDevices = devices.filter((device) => device.kind === "videoinput")
+        setCameraCount(cameraDevices.length)
+        setOnlineCount(cameraDevices.length)
+      } catch {
+        if (cancelled) return
+        setCameraCount(0)
+        setOnlineCount(0)
+      }
+    }
+
+    void syncCameraStats()
+    setEventCount(0)
+    setRecentEvents([])
+
+    const onDeviceChange = () => {
+      void syncCameraStats()
+    }
+    navigator.mediaDevices?.addEventListener?.("devicechange", onDeviceChange)
+
+    return () => {
+      cancelled = true
+      navigator.mediaDevices?.removeEventListener?.("devicechange", onDeviceChange)
+    }
+  }, [])
+
+  const stats = [
+    { label: "Active Cameras", value: String(onlineCount), icon: Camera, status: "online" },
+    { label: "Live Alerts", value: String(eventCount), icon: AlertTriangle, status: eventCount > 0 ? "warning" : "online" },
+    { label: "System Status", value: "Operational", icon: Activity, status: "online" },
+    { label: "Coverage Areas", value: String(cameraCount), icon: MapPin, status: "online" },
   ]
 
   const renderSection = () => {
@@ -145,17 +180,7 @@ export function Dashboard() {
                   {recentEvents.map((event) => (
                     <div key={event.id} className="flex items-center justify-between p-3 rounded-lg bg-muted/30">
                       <div className="flex items-center gap-3">
-                        <Badge
-                          variant={
-                            event.severity === "high"
-                              ? "destructive"
-                              : event.severity === "medium"
-                                ? "default"
-                                : "secondary"
-                          }
-                        >
-                          {event.severity}
-                        </Badge>
+                        <Badge variant="secondary">event</Badge>
                         <div>
                           <p className="font-medium text-foreground">{event.type}</p>
                           <p className="text-sm text-muted-foreground">{event.camera}</p>

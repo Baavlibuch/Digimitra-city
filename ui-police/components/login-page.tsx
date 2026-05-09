@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { loginWithPassword } from "@/src/lib/auth-token"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -30,6 +31,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
   const [authMethod, setAuthMethod] = useState<"biometric" | "token" | "otp">("biometric")
   const [language, setLanguage] = useState("en")
   const [isLoading, setIsLoading] = useState(false)
+  const [loginError, setLoginError] = useState<string | null>(null)
   const [passwordStrength, setPasswordStrength] = useState(0)
 
   const calculatePasswordStrength = (pwd: string) => {
@@ -48,11 +50,16 @@ export function LoginPage({ onLogin }: LoginPageProps) {
   }
 
   const handleAuthenticate = async () => {
+    setLoginError(null)
     setIsLoading(true)
-    // Simulate authentication process
-    await new Promise((resolve) => setTimeout(resolve, 2000))
-    setIsLoading(false)
-    onLogin()
+    try {
+      await loginWithPassword(policeId, password)
+      onLogin()
+    } catch (e) {
+      setLoginError(e instanceof Error ? e.message : "Login failed")
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   const getStrengthColor = (strength: number) => {
@@ -246,10 +253,16 @@ export function LoginPage({ onLogin }: LoginPageProps) {
                 </div>
               </div>
 
+              {loginError && (
+                <p className="text-sm text-red-400 text-center" role="alert">
+                  {loginError}
+                </p>
+              )}
+
               {/* Authenticate Button */}
               <Button
-                onClick={handleAuthenticate}
-                disabled={!policeId || !password || passwordStrength < 50 || isLoading}
+                onClick={() => void handleAuthenticate()}
+                disabled={!policeId.trim() || isLoading}
                 className="w-full bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-semibold py-3 text-lg"
               >
                 {isLoading ? (

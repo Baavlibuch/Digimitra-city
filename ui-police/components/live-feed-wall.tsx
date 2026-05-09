@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect, useRef, useCallback } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -22,7 +22,10 @@ import {
   Pause,
   SkipBack,
   SkipForward,
+  RefreshCw,
 } from "lucide-react"
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 interface CameraFeed {
   id: string
@@ -35,6 +38,8 @@ interface CameraFeed {
   isRecording: boolean
   hasAudio: boolean
   resolution: string
+  /** deviceId from enumerateDevices — only set for real webcam slots */
+  deviceId?: string
 }
 
 interface AINotification {
@@ -46,291 +51,398 @@ interface AINotification {
   action?: string
 }
 
+type StreamStatus = "idle" | "loading" | "live" | "error"
+
+// ─── Webcam hook (logic from text 2) ─────────────────────────────────────────
+
+function useWebcamStream(deviceId?: string) {
+  const [stream, setStream] = useState<MediaStream | null>(null)
+  const [status, setStatus] = useState<StreamStatus>("idle")
+  const [error, setError] = useState<string | null>(null)
+  const streamRef = useRef<MediaStream | null>(null)
+
+  const stopCurrentStream = useCallback(() => {
+    if (!streamRef.current) return
+    streamRef.current.getTracks().forEach((t) => t.stop())
+    streamRef.current = null
+  }, [])
+
+  useEffect(() => {
+    if (!deviceId) {
+      stopCurrentStream()
+      setStream(null)
+      setStatus("idle")
+      setError(null)
+      return
+    }
+
+    let active = true
+    setStatus("loading")
+    setError(null)
+
+    navigator.mediaDevices
+      .getUserMedia({ video: { deviceId: { exact: deviceId } }, audio: false })
+      .then((s) => {
+        if (!active) {
+          s.getTracks().forEach((t) => t.stop())
+          return
+        }
+        stopCurrentStream()
+        streamRef.current = s
+        setStream(s)
+        setStatus("live")
+      })
+      .catch((err: Error) => {
+        if (!active) return
+        setStatus("error")
+        setError(err.message ?? "Camera access denied")
+      })
+
+    return () => {
+      active = false
+      stopCurrentStream()
+      setStream(null)
+    }
+  }, [deviceId, stopCurrentStream])
+
+  return { stream, status, error }
+}
+
+function useDeviceList() {
+  const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
+
+  const refresh = useCallback(async () => {
+    try {
+      // Request permission first so labels are populated
+      await navigator.mediaDevices.getUserMedia({ video: true }).then((s) => s.getTracks().forEach((t) => t.stop()))
+      const all = await navigator.mediaDevices.enumerateDevices()
+      setDevices(all.filter((d) => d.kind === "videoinput"))
+    } catch {
+      setDevices([])
+    }
+  }, [])
+
+  useEffect(() => {
+    void refresh()
+  }, [refresh])
+
+  return { devices, refresh }
+}
+
+// ─── Live video element ───────────────────────────────────────────────────────
+
+function WebcamPreview({ stream, muted }: { stream: MediaStream | null; muted: boolean }) {
+  const videoRef = useRef<HTMLVideoElement>(null)
+
+  useEffect(() => {
+    const el = videoRef.current
+    if (!el) return
+    if (stream) {
+      el.srcObject = stream
+      void el.play()
+    } else {
+      el.srcObject = null
+    }
+    return () => {
+      if (el.srcObject) {
+        el.pause()
+        el.srcObject = null
+      }
+    }
+  }, [stream])
+
+  if (!stream) return null
+
+  return (
+    <video
+      ref={videoRef}
+      autoPlay
+      playsInline
+      muted={muted}
+      className="absolute inset-0 w-full h-full object-cover"
+    />
+  )
+}
+
+// ─── Mock data ────────────────────────────────────────────────────────────────
+
+const MOCK_FEEDS: CameraFeed[] = [
+  {
+    id: "1",
+    name: "Camera 01",
+    location: "Main Entrance",
+    status: "online",
+    lastActivity: "Live",
+    aiSuggestion: "High traffic area – recommended for monitoring",
+    priority: 9,
+    isRecording: true,
+    hasAudio: true,
+    resolution: "1080p",
+  },
+  {
+    id: "2",
+    name: "Camera 02",
+    location: "Parking Lot A",
+    status: "alert",
+    lastActivity: "Motion detected 30s ago",
+    aiSuggestion: "⚠️ Suspicious motion detected at 02:14",
+    priority: 10,
+    isRecording: true,
+    hasAudio: false,
+    resolution: "720p",
+  },
+  {
+    id: "3",
+    name: "Camera 03",
+    location: "Emergency Exit",
+    status: "online",
+    lastActivity: "Live",
+    aiSuggestion: "Person loitering detected – want to zoom in?",
+    priority: 7,
+    isRecording: true,
+    hasAudio: true,
+    resolution: "1080p",
+  },
+  {
+    id: "4",
+    name: "Camera 04",
+    location: "Loading Dock",
+    status: "offline",
+    lastActivity: "1 hour ago",
+    priority: 3,
+    isRecording: false,
+    hasAudio: false,
+    resolution: "720p",
+  },
+  {
+    id: "5",
+    name: "Camera 05",
+    location: "Reception Area",
+    status: "online",
+    lastActivity: "Live",
+    aiSuggestion: "Person loitering detected – want to zoom in?",
+    priority: 8,
+    isRecording: true,
+    hasAudio: true,
+    resolution: "4K",
+  },
+  {
+    id: "6",
+    name: "Camera 06",
+    location: "Corridor B",
+    status: "alert",
+    lastActivity: "Alert 2m ago",
+    aiSuggestion: "⚠️ Unusual activity – auto-switched to priority view",
+    priority: 9,
+    isRecording: true,
+    hasAudio: false,
+    resolution: "1080p",
+  },
+  {
+    id: "7",
+    name: "Camera 07",
+    location: "Cafeteria",
+    status: "online",
+    lastActivity: "Live",
+    priority: 5,
+    isRecording: true,
+    hasAudio: true,
+    resolution: "720p",
+  },
+  {
+    id: "8",
+    name: "Camera 08",
+    location: "Server Room",
+    status: "online",
+    lastActivity: "Live",
+    priority: 6,
+    isRecording: true,
+    hasAudio: false,
+    resolution: "1080p",
+  },
+  {
+    id: "9",
+    name: "Camera 09",
+    location: "Rooftop",
+    status: "online",
+    lastActivity: "Live",
+    aiSuggestion: "High traffic area – recommended for monitoring",
+    priority: 4,
+    isRecording: true,
+    hasAudio: false,
+    resolution: "4K",
+  },
+]
+
+const AI_NOTIFICATIONS: AINotification[] = [
+  {
+    id: "1",
+    cameraId: "2",
+    message: "Suspicious motion detected at Camera 02. Want to zoom in?",
+    timestamp: "30s ago",
+    type: "alert",
+    action: "zoom",
+  },
+  {
+    id: "2",
+    cameraId: "5",
+    message: "Person loitering near Reception Area for 8+ minutes",
+    timestamp: "2m ago",
+    type: "suggestion",
+    action: "focus",
+  },
+  {
+    id: "3",
+    cameraId: "6",
+    message: "Auto-switched Camera 06 to priority view due to unusual activity",
+    timestamp: "3m ago",
+    type: "motion",
+  },
+]
+
+// ─── Main component ───────────────────────────────────────────────────────────
+
 export function LiveFeedWall() {
+  // ── Device / stream state ──
+  const { devices, refresh: refreshDevices } = useDeviceList()
+
+  /**
+   * Map of feedId → deviceId.
+   * Camera 01 (id="1") is auto-assigned to the first real webcam if available.
+   */
+  const [feedDeviceMap, setFeedDeviceMap] = useState<Record<string, string>>({})
+
+  // Auto-assign first device to feed "1" once devices load
+  useEffect(() => {
+    if (devices.length > 0) {
+      setFeedDeviceMap((prev) =>
+        prev["1"] ? prev : { ...prev, "1": devices[0].deviceId }
+      )
+    }
+  }, [devices])
+
+  // ── Grid / UI state ──
   const [gridSize, setGridSize] = useState<"2x2" | "3x3" | "4x4">("3x3")
   const [selectedFeeds, setSelectedFeeds] = useState<string[]>([])
   const [fullscreenFeed, setFullscreenFeed] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
   const [autoArrange, setAutoArrange] = useState(true)
   const [showAISuggestions, setShowAISuggestions] = useState(true)
+
+  // ── Playback state (fullscreen modal) ──
   const [isPlaying, setIsPlaying] = useState(true)
   const [currentTime, setCurrentTime] = useState("14:32:15")
   const [isLive, setIsLive] = useState(true)
-  const [volume, setVolume] = useState(75)
   const [isMuted, setIsMuted] = useState(false)
-  const [progress, setProgress] = useState(45) // Progress percentage for playback
-  const [duration, setDuration] = useState("01:23:45") // Total duration
+  const [progress, setProgress] = useState(45)
+  const duration = "01:23:45"
 
-  // Mock camera feeds data
-  const allFeeds: CameraFeed[] = [
-    {
-      id: "1",
-      name: "Camera 01",
-      location: "Main Entrance",
-      status: "online",
-      lastActivity: "Live",
-      aiSuggestion: "High traffic area - recommended for monitoring",
-      priority: 9,
-      isRecording: true,
-      hasAudio: true,
-      resolution: "1080p",
-    },
-    {
-      id: "2",
-      name: "Camera 02",
-      location: "Parking Lot A",
-      status: "alert",
-      lastActivity: "Motion detected 30s ago",
-      aiSuggestion: "⚠️ Suspicious motion detected at 02:14",
-      priority: 10,
-      isRecording: true,
-      hasAudio: false,
-      resolution: "720p",
-    },
-    {
-      id: "3",
-      name: "Camera 03",
-      location: "Emergency Exit",
-      status: "online",
-      lastActivity: "Live",
-      aiSuggestion: "Person loitering detected - want to zoom in?",
-      priority: 7,
-      isRecording: true,
-      hasAudio: true,
-      resolution: "1080p",
-    },
-    {
-      id: "4",
-      name: "Camera 04",
-      location: "Loading Dock",
-      status: "offline",
-      lastActivity: "1 hour ago",
-      priority: 3,
-      isRecording: false,
-      hasAudio: false,
-      resolution: "720p",
-    },
-    {
-      id: "5",
-      name: "Camera 05",
-      location: "Reception Area",
-      status: "online",
-      lastActivity: "Live",
-      aiSuggestion: "Person loitering detected - want to zoom in?",
-      priority: 8,
-      isRecording: true,
-      hasAudio: true,
-      resolution: "4K",
-    },
-    {
-      id: "6",
-      name: "Camera 06",
-      location: "Corridor B",
-      status: "alert",
-      lastActivity: "Alert 2m ago",
-      aiSuggestion: "⚠️ Unusual activity - auto-switched to priority view",
-      priority: 9,
-      isRecording: true,
-      hasAudio: false,
-      resolution: "1080p",
-    },
-    {
-      id: "7",
-      name: "Camera 07",
-      location: "Cafeteria",
-      status: "online",
-      lastActivity: "Live",
-      priority: 5,
-      isRecording: true,
-      hasAudio: true,
-      resolution: "720p",
-    },
-    {
-      id: "8",
-      name: "Camera 08",
-      location: "Server Room",
-      status: "online",
-      lastActivity: "Live",
-      priority: 6,
-      isRecording: true,
-      hasAudio: false,
-      resolution: "1080p",
-    },
-    {
-      id: "9",
-      name: "Camera 09",
-      location: "Rooftop",
-      status: "online",
-      lastActivity: "Live",
-      aiSuggestion: "High traffic area - recommended for monitoring",
-      priority: 4,
-      isRecording: true,
-      hasAudio: false,
-      resolution: "4K",
-    },
-  ]
+  // Webcam stream for the currently fullscreened feed
+  const fullscreenDeviceId = fullscreenFeed ? feedDeviceMap[fullscreenFeed] : undefined
+  const { stream: fullscreenStream, status: fullscreenStreamStatus } = useWebcamStream(fullscreenDeviceId)
 
-  // Mock AI notifications
-  const aiNotifications: AINotification[] = [
-    {
-      id: "1",
-      cameraId: "2",
-      message: "Suspicious motion detected at Camera 02. Want to zoom in?",
-      timestamp: "30s ago",
-      type: "alert",
-      action: "zoom",
-    },
-    {
-      id: "2",
-      cameraId: "5",
-      message: "Person loitering near Reception Area for 8+ minutes",
-      timestamp: "2m ago",
-      type: "suggestion",
-      action: "focus",
-    },
-    {
-      id: "3",
-      cameraId: "6",
-      message: "Auto-switched Camera 06 to priority view due to unusual activity",
-      timestamp: "3m ago",
-      type: "motion",
-    },
-  ]
-
-  const handlePlayPause = () => {
-    setIsPlaying(!isPlaying)
-    if (isLive && !isPlaying) {
-      setIsLive(false) // When pausing live feed, switch to playback mode
+  // ── Grid helpers ──
+  const getGridDimensions = () => {
+    switch (gridSize) {
+      case "2x2": return { cols: 2, maxFeeds: 4 }
+      case "3x3": return { cols: 3, maxFeeds: 9 }
+      case "4x4": return { cols: 4, maxFeeds: 16 }
+      default: return { cols: 3, maxFeeds: 9 }
     }
+  }
+  const { cols, maxFeeds } = getGridDimensions()
+
+  const getDisplayFeeds = (): CameraFeed[] => {
+    let feeds = MOCK_FEEDS.filter(
+      (f) =>
+        f.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        f.location.toLowerCase().includes(searchQuery.toLowerCase())
+    )
+    if (selectedFeeds.length > 0) feeds = feeds.filter((f) => selectedFeeds.includes(f.id))
+    if (autoArrange) feeds = [...feeds].sort((a, b) => b.priority - a.priority)
+    return feeds.slice(0, maxFeeds)
+  }
+  const displayFeeds = getDisplayFeeds()
+
+  // ── Playback controls ──
+  const handlePlayPause = () => {
+    setIsPlaying((p) => !p)
+    if (isLive) setIsLive(false)
   }
 
   const handleGoLive = () => {
     setIsLive(true)
     setIsPlaying(true)
     setCurrentTime("14:32:15")
-    setProgress(100) // Live is at 100% progress
+    setProgress(100)
   }
 
-  const handleSkipBack = () => {
-    if (isLive) return // Can't skip back in live mode
-    const [hours, minutes, seconds] = currentTime.split(":").map(Number)
-    const totalSeconds = Math.max(0, hours * 3600 + minutes * 60 + seconds - 10)
-    const newHours = Math.floor(totalSeconds / 3600)
-    const newMinutes = Math.floor((totalSeconds % 3600) / 60)
-    const newSecs = totalSeconds % 60
+  const shiftTime = (deltaSecs: number) => {
+    if (isLive) return
+    const [h, m, s] = currentTime.split(":").map(Number)
+    const total = Math.max(0, Math.min(5025, h * 3600 + m * 60 + s + deltaSecs))
+    const nh = Math.floor(total / 3600)
+    const nm = Math.floor((total % 3600) / 60)
+    const ns = total % 60
     setCurrentTime(
-      `${newHours.toString().padStart(2, "0")}:${newMinutes.toString().padStart(2, "0")}:${newSecs.toString().padStart(2, "0")}`,
+      `${String(nh).padStart(2, "0")}:${String(nm).padStart(2, "0")}:${String(ns).padStart(2, "0")}`
     )
-    setProgress(Math.max(0, progress - 5))
+    setProgress(Math.round((total / 5025) * 100))
   }
 
-  const handleSkipForward = () => {
-    if (isLive) return // Can't skip forward in live mode
-    const [hours, minutes, seconds] = currentTime.split(":").map(Number)
-    const totalSeconds = hours * 3600 + minutes * 60 + seconds + 10
-    const newHours = Math.floor(totalSeconds / 3600)
-    const newMinutes = Math.floor((totalSeconds % 3600) / 60)
-    const newSecs = totalSeconds % 60
+  const handleProgressChange = (value: number[]) => {
+    if (isLive) return
+    const pct = value[0]
+    setProgress(pct)
+    const total = Math.floor((pct / 100) * 5025)
+    const h = Math.floor(total / 3600)
+    const m = Math.floor((total % 3600) / 60)
+    const s = total % 60
     setCurrentTime(
-      `${newHours.toString().padStart(2, "0")}:${newMinutes.toString().padStart(2, "0")}:${newSecs.toString().padStart(2, "0")}`,
+      `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`
     )
-    setProgress(Math.min(100, progress + 5))
   }
 
-  const toggleMute = () => {
-    setIsMuted(!isMuted)
-  }
-
+  // ── Camera actions ──
   const handleViewCamera = (cameraId: string) => {
     setFullscreenFeed(cameraId)
     setIsLive(true)
     setIsPlaying(true)
   }
 
-  const handlePlayback = (cameraId: string) => {
-    setFullscreenFeed(cameraId)
-    setIsLive(false)
-    setIsPlaying(false)
-    setCurrentTime("12:00:00") // Start from a specific time for playback
-    setProgress(0) // Start from beginning
-  }
-
-  const handleProgressChange = (value: number[]) => {
-    if (isLive) return // Can't change progress in live mode
-    setProgress(value[0])
-    // Calculate time based on progress
-    const totalDurationSeconds = 5025 // 01:23:45 in seconds
-    const currentSeconds = Math.floor((value[0] / 100) * totalDurationSeconds)
-    const hours = Math.floor(currentSeconds / 3600)
-    const minutes = Math.floor((currentSeconds % 3600) / 60)
-    const seconds = currentSeconds % 60
-    setCurrentTime(
-      `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`,
-    )
-  }
-
-  const getGridDimensions = () => {
-    switch (gridSize) {
-      case "2x2":
-        return { cols: 2, rows: 2, maxFeeds: 4 }
-      case "3x3":
-        return { cols: 3, rows: 3, maxFeeds: 9 }
-      case "4x4":
-        return { cols: 4, rows: 4, maxFeeds: 16 }
-      default:
-        return { cols: 3, rows: 3, maxFeeds: 9 }
-    }
-  }
-
-  const { cols, maxFeeds } = getGridDimensions()
-
-  // Auto-arrange feeds based on AI priority
-  const getDisplayFeeds = () => {
-    let feeds = allFeeds.filter(
-      (feed) =>
-        feed.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        feed.location.toLowerCase().includes(searchQuery.toLowerCase()),
+  const toggleFeedSelection = (feedId: string) =>
+    setSelectedFeeds((prev) =>
+      prev.includes(feedId) ? prev.filter((id) => id !== feedId) : [...prev, feedId]
     )
 
-    if (selectedFeeds.length > 0) {
-      feeds = feeds.filter((feed) => selectedFeeds.includes(feed.id))
-    }
-
-    if (autoArrange) {
-      feeds = feeds.sort((a, b) => b.priority - a.priority)
-    }
-
-    return feeds.slice(0, maxFeeds)
+  const handleAIAction = (n: AINotification) => {
+    if (n.action === "zoom" || n.action === "focus") setFullscreenFeed(n.cameraId)
   }
 
-  const displayFeeds = getDisplayFeeds()
+  // ── Feed device assignment ──
+  const assignDevice = (feedId: string, deviceId: string) =>
+    setFeedDeviceMap((prev) => ({ ...prev, [feedId]: deviceId }))
 
+  // ── Status helpers ──
   const getStatusColor = (status: string) => {
     switch (status) {
-      case "online":
-        return "bg-green-500"
-      case "alert":
-        return "bg-red-500 animate-pulse"
-      case "offline":
-        return "bg-gray-500"
-      default:
-        return "bg-gray-500"
+      case "online": return "bg-green-500"
+      case "alert": return "bg-red-500 animate-pulse"
+      default: return "bg-gray-500"
     }
   }
 
-  const toggleFeedSelection = (feedId: string) => {
-    setSelectedFeeds((prev) => (prev.includes(feedId) ? prev.filter((id) => id !== feedId) : [...prev, feedId]))
-  }
-
-  const handleAIAction = (notification: AINotification) => {
-    if (notification.action === "zoom" || notification.action === "focus") {
-      setFullscreenFeed(notification.cameraId)
-    }
+  // ── Per-grid-cell stream (only rendered for feeds that have a deviceId) ──
+  // We use a child component so each feed gets its own hook instance.
+  function GridCellStream({ feed }: { feed: CameraFeed }) {
+    const deviceId = feedDeviceMap[feed.id]
+    const { stream } = useWebcamStream(deviceId)
+    return <WebcamPreview stream={stream} muted />
   }
 
   return (
     <div className="space-y-6">
-      {/* Header */}
+      {/* ── Header ── */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-foreground">Live Feed Wall</h1>
@@ -340,17 +452,68 @@ export function LiveFeedWall() {
           <Button
             variant={autoArrange ? "default" : "outline"}
             size="sm"
-            onClick={() => setAutoArrange(!autoArrange)}
+            onClick={() => setAutoArrange((v) => !v)}
             className={!autoArrange ? "bg-transparent" : ""}
           >
             <Zap className="w-4 h-4 mr-2" />
             AI Auto-Arrange
           </Button>
+          <Button variant="outline" size="sm" className="bg-transparent" onClick={() => void refreshDevices()}>
+            <RefreshCw className="w-4 h-4 mr-2" />
+            Refresh Cameras
+          </Button>
         </div>
       </div>
 
-      {/* AI Notifications */}
-      {showAISuggestions && aiNotifications.length > 0 && (
+      {/* ── Webcam device assignment (shown only when real devices exist) ── */}
+      {devices.length > 0 && (
+        <Card className="border-slate-700/50">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <Camera className="w-4 h-4" />
+              Assign real webcams to feeds
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-wrap gap-3">
+              {MOCK_FEEDS.slice(0, devices.length + 1).map((feed) => (
+                <div key={feed.id} className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground w-20">{feed.name}</span>
+                  <Select
+                    value={feedDeviceMap[feed.id] ?? "none"}
+                    onValueChange={(val) => {
+                      if (val === "none") {
+                        setFeedDeviceMap((prev) => {
+                          const next = { ...prev }
+                          delete next[feed.id]
+                          return next
+                        })
+                      } else {
+                        assignDevice(feed.id, val)
+                      }
+                    }}
+                  >
+                    <SelectTrigger className="w-44 h-7 text-xs">
+                      <SelectValue placeholder="— mock —" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">— mock only —</SelectItem>
+                      {devices.map((d) => (
+                        <SelectItem key={d.deviceId} value={d.deviceId}>
+                          {d.label || `Camera ${d.deviceId.slice(0, 8)}`}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── AI Notifications ── */}
+      {showAISuggestions && AI_NOTIFICATIONS.length > 0 && (
         <Card className="bg-gradient-to-r from-purple-500/10 to-blue-500/10 border-purple-500/20">
           <CardHeader>
             <div className="flex items-center justify-between">
@@ -365,26 +528,23 @@ export function LiveFeedWall() {
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {aiNotifications.slice(0, 2).map((notification) => (
-                <div
-                  key={notification.id}
-                  className="flex items-center justify-between p-3 bg-purple-500/10 rounded-lg"
-                >
+              {AI_NOTIFICATIONS.slice(0, 2).map((n) => (
+                <div key={n.id} className="flex items-center justify-between p-3 bg-purple-500/10 rounded-lg">
                   <div className="flex items-center gap-3">
                     <div className="w-2 h-2 bg-purple-400 rounded-full animate-pulse" />
                     <div>
-                      <p className="text-sm text-foreground">{notification.message}</p>
-                      <p className="text-xs text-muted-foreground">{notification.timestamp}</p>
+                      <p className="text-sm text-foreground">{n.message}</p>
+                      <p className="text-xs text-muted-foreground">{n.timestamp}</p>
                     </div>
                   </div>
-                  {notification.action && (
+                  {n.action && (
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={() => handleAIAction(notification)}
+                      onClick={() => handleAIAction(n)}
                       className="bg-transparent border-purple-500/30 hover:bg-purple-500/10"
                     >
-                      {notification.action === "zoom" ? "Zoom In" : "Focus"}
+                      {n.action === "zoom" ? "Zoom In" : "Focus"}
                     </Button>
                   )}
                 </div>
@@ -394,7 +554,7 @@ export function LiveFeedWall() {
         </Card>
       )}
 
-      {/* Controls */}
+      {/* ── Controls ── */}
       <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
@@ -406,7 +566,7 @@ export function LiveFeedWall() {
               className="w-64"
             />
           </div>
-          <Select value={gridSize} onValueChange={(value: any) => setGridSize(value)}>
+          <Select value={gridSize} onValueChange={(v: "2x2" | "3x3" | "4x4") => setGridSize(v)}>
             <SelectTrigger className="w-24">
               <SelectValue />
             </SelectTrigger>
@@ -426,12 +586,10 @@ export function LiveFeedWall() {
         </div>
       </div>
 
-      {/* Feed Grid */}
+      {/* ── Feed Grid ── */}
       <div
-        className={`grid gap-4`}
-        style={{
-          gridTemplateColumns: `repeat(${cols}, 1fr)`,
-        }}
+        className="grid gap-4"
+        style={{ gridTemplateColumns: `repeat(${cols}, 1fr)` }}
       >
         {displayFeeds.map((feed) => (
           <Card
@@ -441,45 +599,56 @@ export function LiveFeedWall() {
             }`}
           >
             <CardContent className="p-0">
-              {/* Video Feed Area */}
+              {/* Video area */}
               <div className="relative aspect-video bg-black rounded-t-lg overflow-hidden">
-                {/* Mock Video Feed */}
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <div className="text-center">
-                    <Camera
-                      className={`w-12 h-12 mx-auto mb-2 ${
-                        feed.status === "online" ? "text-green-500" : "text-gray-500"
-                      }`}
-                    />
-                    <p className="text-white text-sm font-medium">{feed.name}</p>
-                    <p className="text-gray-300 text-xs">{feed.location}</p>
-                  </div>
-                </div>
+                {/* Real webcam stream (if assigned) */}
+                <GridCellStream feed={feed} />
 
-                {/* Status Indicator */}
-                <div className="absolute top-2 left-2">
+                {/* Placeholder when no real stream */}
+                {!feedDeviceMap[feed.id] && (
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="text-center">
+                      <Camera
+                        className={`w-12 h-12 mx-auto mb-2 ${
+                          feed.status === "online" ? "text-green-500" : "text-gray-500"
+                        }`}
+                      />
+                      <p className="text-white text-sm font-medium">{feed.name}</p>
+                      <p className="text-gray-300 text-xs">{feed.location}</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Status dot */}
+                <div className="absolute top-2 left-2 z-10">
                   <div className={`w-3 h-3 rounded-full ${getStatusColor(feed.status)}`} />
                 </div>
 
-                {/* Recording Indicator */}
+                {/* REC badge */}
                 {feed.isRecording && (
-                  <div className="absolute top-2 right-2 flex items-center gap-1">
+                  <div className="absolute top-2 right-2 z-10 flex items-center gap-1">
                     <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
                     <span className="text-white text-xs">REC</span>
                   </div>
                 )}
 
-                {/* AI Suggestion Overlay */}
+                {/* AI suggestion overlay */}
                 {feed.aiSuggestion && (
-                  <div className="absolute bottom-2 left-2 right-2">
+                  <div className="absolute bottom-2 left-2 right-2 z-10">
                     <div className="bg-blue-500/90 backdrop-blur-sm rounded px-2 py-1">
                       <p className="text-white text-xs">{feed.aiSuggestion}</p>
                     </div>
                   </div>
                 )}
 
-                <div className="absolute inset-0 bg-black/50 opacity-0 hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-                  <Button size="icon" variant="secondary" className="w-8 h-8" onClick={() => handleViewCamera(feed.id)}>
+                {/* Hover controls */}
+                <div className="absolute inset-0 z-20 bg-black/50 opacity-0 hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                  <Button
+                    size="icon"
+                    variant="secondary"
+                    className="w-8 h-8"
+                    onClick={() => handleViewCamera(feed.id)}
+                  >
                     <Maximize2 className="w-4 h-4" />
                   </Button>
                   <Button size="icon" variant="secondary" className="w-8 h-8" onClick={handlePlayPause}>
@@ -491,7 +660,7 @@ export function LiveFeedWall() {
                 </div>
               </div>
 
-              {/* Feed Info */}
+              {/* Feed metadata */}
               <div className="p-3">
                 <div className="flex items-center justify-between mb-2">
                   <h3 className="font-medium text-foreground text-sm">{feed.name}</h3>
@@ -506,7 +675,7 @@ export function LiveFeedWall() {
                 <div className="flex items-center justify-between text-xs text-muted-foreground mt-1">
                   <div className="flex items-center gap-1">
                     <Clock className="w-3 h-3" />
-                    <span>{feed.lastActivity}</span>
+                    <span>{feedDeviceMap[feed.id] ? "Live (webcam)" : feed.lastActivity}</span>
                   </div>
                   <Button
                     size="sm"
@@ -522,9 +691,12 @@ export function LiveFeedWall() {
           </Card>
         ))}
 
-        {/* Empty Slots */}
-        {Array.from({ length: maxFeeds - displayFeeds.length }).map((_, index) => (
-          <Card key={`empty-${index}`} className="bg-card/20 backdrop-blur-sm border-slate-600/30 border-dashed">
+        {/* Empty slots */}
+        {Array.from({ length: maxFeeds - displayFeeds.length }).map((_, i) => (
+          <Card
+            key={`empty-${i}`}
+            className="bg-card/20 backdrop-blur-sm border-slate-600/30 border-dashed"
+          >
             <CardContent className="p-0">
               <div className="aspect-video flex items-center justify-center">
                 <div className="text-center">
@@ -537,10 +709,10 @@ export function LiveFeedWall() {
         ))}
       </div>
 
-      {/* Fullscreen Modal */}
+      {/* ── Fullscreen Modal ── */}
       {fullscreenFeed && (
         <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center">
-          <div className="relative w-full h-full max-w-6xl max-h-4xl p-4">
+          <div className="relative w-full h-full max-w-6xl p-4">
             <Button
               className="absolute top-4 right-4 z-10"
               variant="secondary"
@@ -549,20 +721,40 @@ export function LiveFeedWall() {
             >
               <X className="w-4 h-4" />
             </Button>
+
             <Card className="w-full h-full bg-card/95 backdrop-blur-sm">
               <CardContent className="p-0 h-full">
                 <div className="relative h-full bg-black rounded-lg overflow-hidden">
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="text-center">
-                      <Camera className="w-24 h-24 text-green-500 mx-auto mb-4" />
-                      <p className="text-white text-xl font-medium">
-                        {allFeeds.find((f) => f.id === fullscreenFeed)?.name}
-                      </p>
-                      <p className="text-gray-300">{allFeeds.find((f) => f.id === fullscreenFeed)?.location}</p>
-                    </div>
-                  </div>
 
-                  <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4">
+                  {/* Real stream in fullscreen */}
+                  {fullscreenStream && (
+                    <WebcamPreview stream={fullscreenStream} muted={isMuted} />
+                  )}
+
+                  {/* Status / loading overlay */}
+                  {fullscreenStreamStatus === "loading" && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/70 z-10">
+                      <p className="text-white text-sm">Connecting to camera…</p>
+                    </div>
+                  )}
+
+                  {/* Placeholder when no real device assigned */}
+                  {!feedDeviceMap[fullscreenFeed] && (
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <div className="text-center">
+                        <Camera className="w-24 h-24 text-green-500 mx-auto mb-4" />
+                        <p className="text-white text-xl font-medium">
+                          {MOCK_FEEDS.find((f) => f.id === fullscreenFeed)?.name}
+                        </p>
+                        <p className="text-gray-300">
+                          {MOCK_FEEDS.find((f) => f.id === fullscreenFeed)?.location}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Controls bar */}
+                  <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4 z-20">
                     {!isLive && (
                       <div className="mb-4">
                         <Slider
@@ -587,16 +779,16 @@ export function LiveFeedWall() {
 
                         {!isLive && (
                           <>
-                            <Button variant="secondary" onClick={handleSkipBack}>
+                            <Button variant="secondary" onClick={() => shiftTime(-10)}>
                               <SkipBack className="w-4 h-4" />
                             </Button>
-                            <Button variant="secondary" onClick={handleSkipForward}>
+                            <Button variant="secondary" onClick={() => shiftTime(10)}>
                               <SkipForward className="w-4 h-4" />
                             </Button>
                           </>
                         )}
 
-                        <Button variant="secondary" onClick={toggleMute}>
+                        <Button variant="secondary" onClick={() => setIsMuted((m) => !m)}>
                           {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
                         </Button>
 
@@ -620,11 +812,12 @@ export function LiveFeedWall() {
                           </Button>
                         )}
                         <div className="text-white text-sm">
-                          {allFeeds.find((f) => f.id === fullscreenFeed)?.resolution}
+                          {MOCK_FEEDS.find((f) => f.id === fullscreenFeed)?.resolution}
                         </div>
                       </div>
                     </div>
                   </div>
+
                 </div>
               </CardContent>
             </Card>
@@ -635,5 +828,5 @@ export function LiveFeedWall() {
   )
 }
 
-export { LiveFeedWall as default }
+export default LiveFeedWall
 export type { CameraFeed }

@@ -4,20 +4,29 @@ import AIAgentPanel from '@/components/ai-agent';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { mockEvents } from '@/lib/mock-data';
 import { AlertTriangle } from 'lucide-react';
 import { useState } from 'react';
 
+type EventItem = {
+  id: string
+  event_type?: string
+  description?: string
+  cameraName?: string
+  severity?: string
+  timestamp?: string
+}
+
 export default function SearchPage() {
   const [searchTerm, setSearchTerm] = useState('');
-  const [filteredEvents, setFilteredEvents] = useState(mockEvents);
+  const [allEvents] = useState<EventItem[]>([])
+  const [filteredEvents, setFilteredEvents] = useState<EventItem[]>([]);
 
   const handleSearch = () => {
     const lowercasedTerm = searchTerm.toLowerCase();
-    const results = mockEvents.filter(event => 
-      event.type.toLowerCase().includes(lowercasedTerm) ||
-      event.description.toLowerCase().includes(lowercasedTerm) ||
-      event.cameraName.toLowerCase().includes(lowercasedTerm)
+    const results = allEvents.filter(event => 
+      (event.event_type || '').toLowerCase().includes(lowercasedTerm) ||
+      (event.description || '').toLowerCase().includes(lowercasedTerm) ||
+      (event.cameraName || '').toLowerCase().includes(lowercasedTerm)
     );
     setFilteredEvents(results);
   };
@@ -40,15 +49,15 @@ export default function SearchPage() {
             {filteredEvents.map((event) => (
               <Card key={event.id} className={`${event.severity === 'high' ? 'border-red-500' : ''}`}>
                 <CardHeader className="flex flex-row items-center justify-between">
-                  <CardTitle className="text-lg">{event.type} at {event.cameraName}</CardTitle>
+                  <CardTitle className="text-lg">{event.event_type || "Event"} at {event.cameraName || "Camera"}</CardTitle>
                   <div className={`flex items-center gap-2 text-sm ${event.severity === 'high' ? 'text-red-500' : event.severity === 'medium' ? 'text-orange-500' : 'text-yellow-500'}`}>
                     <AlertTriangle className="h-4 w-4"/> 
-                    <span>{event.severity.charAt(0).toUpperCase() + event.severity.slice(1)}</span>
+                    <span>{(event.severity || "low").charAt(0).toUpperCase() + (event.severity || "low").slice(1)}</span>
                   </div>
                 </CardHeader>
                 <CardContent>
-                  <p className="text-muted-foreground">{event.description}</p>
-                  <p className="text-xs text-muted-foreground mt-2">{new Date(event.timestamp).toLocaleString()}</p>
+                  <p className="text-muted-foreground">{event.description || "No description available"}</p>
+                  <p className="text-xs text-muted-foreground mt-2">{event.timestamp ? new Date(event.timestamp).toLocaleString() : "N/A"}</p>
                 </CardContent>
               </Card>
             ))}

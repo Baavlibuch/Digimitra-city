@@ -5,10 +5,12 @@ from typing import List, Optional
 from urllib.parse import urljoin
 
 from sqlalchemy.orm import Session
+from fastapi import Depends
 from minio import Minio
 from pymilvus import MilvusClient
 
 from shared.models import Event, Camera
+from .database import get_db
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -17,6 +19,7 @@ logger = logging.getLogger(__name__)
 class SurveillanceServices:
     def __init__(self, db: Session):
         self.db = db
+        self.vector_search_enabled = False
         # Initialize MinIO client
         self.minio_client = Minio(
             endpoint=os.environ.get("MINIO_ENDPOINT"),
@@ -25,19 +28,32 @@ class SurveillanceServices:
             secure=False
         )
         # Initialize Milvus client
-        self.milvus_client = MilvusClient(
-            host=os.environ.get("MILVUS_HOST"),
-            port=int(os.environ.get("MILVUS_PORT"))
-        )
+        self.milvus_client = None
+        self._init_milvus_client()
         # HLS base URL for playback
         self.hls_base_url = f"http://{os.environ.get('MINIO_ENDPOINT')}/hls/"
+
+    def _init_milvus_client(self):
+        try:
+            self.milvus_client = MilvusClient(
+                host=os.environ.get("MILVUS_HOST"),
+                port=int(os.environ.get("MILVUS_PORT"))
+            )
+        except Exception as e:
+            self.milvus_client = None
+            self.vector_search_enabled = False
+            logger.warning(f"Milvus unavailable, vector search disabled: {e}")
 
     def initialize_services(self):
         """
         Initializes MinIO buckets and Milvus collections if they don't exist.
         """
         self._initialize_minio()
-        self._initialize_milvus()
+        try:
+            self._initialize_milvus()
+        except Exception as e:
+            self.vector_search_enabled = False
+            logger.warning(f"Milvus unavailable, vector search disabled: {e}")
 
     def _initialize_minio(self):
         """
@@ -58,26 +74,23 @@ class SurveillanceServices:
         """
         Creates Milvus collections if they don't already exist.
         """
+        if self.milvus_client is None:
+            self.vector_search_enabled = False
+            logger.warning("Milvus unavailable, vector search disabled")
+            return
+
         try:
             if not self.milvus_client.has_collection("events"):
                 self.milvus_client.create_collection(
                     collection_name="events",
-                    schema={
-                        "fields": [
-                            {"name": "embedding", "type": "FLOAT_VECTOR", "params": {"dim": 512}},
-                            {"name": "event_id", "type": "VARCHAR", "params": {"max_length": 36}},
-                            {"name": "timestamp", "type": "INT64"},
-                            {"name": "camera_id", "type": "VARCHAR", "params": {"max_length": 255}},
-                        ]
-                    },
-                    index_params=[
-                        {"field": "embedding", "index_type": "IVF_FLAT", "metric_type": "L2"}
-                    ]
+                    dimension=512,
+                    metric_type="L2",
                 )
                 logger.info("Created Milvus collection: events")
+            self.vector_search_enabled = True
         except Exception as e:
-            logger.error(f"Error initializing Milvus: {e}")
-            raise
+            self.vector_search_enabled = False
+            logger.warning(f"Milvus unavailable, vector search disabled: {e}")
     
     def get_event_playback_urls(self, event_id: str) -> dict:
         """
@@ -118,6 +131,10 @@ class SurveillanceServices:
         """
         Searches for events in Milvus based on embedding similarity.
         """
+        if not self.vector_search_enabled or self.milvus_client is None:
+            logger.warning("Milvus unavailable, vector search disabled")
+            return []
+
         try:
             search_params = {"metric_type": "L2", "params": {"nprobe": 10}}
             results = self.milvus_client.search(
@@ -149,6 +166,5 @@ class SurveillanceServices:
             return urljoin(self.hls_base_url, f"{camera.id}/live.m3u8")
         return None
 
-def get_surveillance_services():
-    db = Session()
+def get_surveillance_services(db: Session = Depends(get_db)):
     return SurveillanceServices(db)

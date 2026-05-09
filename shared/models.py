@@ -1,7 +1,8 @@
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey, JSON
+from sqlalchemy import Column, String, Float, DateTime, ForeignKey, JSON
 from sqlalchemy.orm import sessionmaker, relationship
 from sqlalchemy.ext.declarative import declarative_base
 import uuid
+from datetime import datetime
 
 Base = declarative_base()
 
@@ -9,9 +10,20 @@ class Camera(Base):
     __tablename__ = 'cameras'
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     name = Column(String)
-    location = Column(String)
+    location = Column(String, nullable=True)
     latitude = Column(Float, nullable=True)
     longitude = Column(Float, nullable=True)
+    type = Column(String, default="surveillance")
+    source_type = Column(String, default="cctv")
+    room_name = Column(String, nullable=False, default="digimitra-default-room")
+    stream_status = Column(String, default="offline")
+    rtsp_url = Column(String, nullable=True)
+    camera_username = Column(String, nullable=True)
+    camera_password = Column(String, nullable=True)
+    ip_address = Column(String, nullable=True)
+    port = Column(String, nullable=True)
+    channel = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 class Event(Base):
     __tablename__ = 'events'
