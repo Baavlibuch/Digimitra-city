@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react"
 import { Dashboard } from "@/components/dashboard"
 import { LoginPage } from "@/components/login-page"
+import { ThemeProvider } from "@/components/theme-provider"
 import { getStoredAccessToken } from "@/src/lib/auth-token"
 
 export default function Home() {
@@ -19,8 +20,16 @@ export default function Home() {
   }
 
   if (!isAuthenticated) {
-    return <LoginPage onLogin={() => setIsAuthenticated(true)} />
+    return (
+      <ThemeProvider defaultTheme="dark" defaultLanguage="en">
+        <LoginPage onLogin={() => setIsAuthenticated(true)} />
+      </ThemeProvider>
+    )
   }
 
-  return <Dashboard />
+  return (
+    <ThemeProvider defaultTheme="dark" defaultLanguage="en">
+      <Dashboard />
+    </ThemeProvider>
+  )
 }

@@ -8,7 +8,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Input } from "@/components/ui/input"
 import { Slider } from "@/components/ui/slider"
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import {
   Camera,
+  CameraOff,
   Grid3X3,
   Maximize2,
   Play,
@@ -23,6 +32,8 @@ import {
   SkipBack,
   SkipForward,
   RefreshCw,
+  Plus,
+  Trash2,
 } from "lucide-react"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -40,6 +51,9 @@ interface CameraFeed {
   resolution: string
   /** deviceId from enumerateDevices — only set for real webcam slots */
   deviceId?: string
+  sourceType?: "webcam" | "cctv"
+  cctvStreamUrl?: string
+  cctvStreamType?: "rtsp" | "hls" | "http"
 }
 
 interface AINotification {
@@ -52,6 +66,11 @@ interface AINotification {
 }
 
 type StreamStatus = "idle" | "loading" | "live" | "error"
+type CameraAddMode = "webcam" | "cctv"
+type CctvConnectionStatus = "idle" | "testing" | "success" | "error"
+const CUSTOM_FEEDS_STORAGE_KEY = "digimitra.liveFeedWall.customFeeds.v1"
+const FEED_DEVICE_MAP_STORAGE_KEY = "digimitra.liveFeedWall.feedDeviceMap.v1"
+const DELETED_FEEDS_STORAGE_KEY = "digimitra.liveFeedWall.deletedFeedIds.v1"
 
 // ─── Webcam hook (logic from text 2) ─────────────────────────────────────────
 
@@ -161,6 +180,38 @@ function WebcamPreview({ stream, muted }: { stream: MediaStream | null; muted: b
       muted={muted}
       className="absolute inset-0 w-full h-full object-cover"
     />
+  )
+}
+
+function CctvPreview({ streamUrl, muted = true }: { streamUrl?: string; muted?: boolean }) {
+  if (!streamUrl) return null
+  return (
+    <video
+      src={streamUrl}
+      autoPlay
+      playsInline
+      muted={muted}
+      controls={false}
+      className="absolute inset-0 w-full h-full object-cover"
+      onError={(event) => {
+        // Keep UI resilient if the stream cannot be rendered in-browser.
+        const target = event.currentTarget
+        target.pause()
+      }}
+    />
+  )
+}
+
+function CameraClosedView({ name, location }: { name: string; location: string }) {
+  return (
+    <div className="absolute inset-0 flex items-center justify-center bg-black">
+      <div className="text-center">
+        <CameraOff className="w-12 h-12 mx-auto mb-2 text-gray-400" />
+        <p className="text-white text-sm font-medium">{name}</p>
+        <p className="text-gray-400 text-xs">{location}</p>
+        <p className="text-gray-500 text-xs mt-1">Camera is currently off</p>
+      </div>
+    </div>
   )
 }
 
@@ -311,6 +362,22 @@ export function LiveFeedWall() {
    * Camera 01 (id="1") is auto-assigned to the first real webcam if available.
    */
   const [feedDeviceMap, setFeedDeviceMap] = useState<Record<string, string>>({})
+  const [customFeeds, setCustomFeeds] = useState<CameraFeed[]>([])
+  const [deletedFeedIds, setDeletedFeedIds] = useState<string[]>([])
+  const [isAddCameraOpen, setIsAddCameraOpen] = useState(false)
+  const [addMode, setAddMode] = useState<CameraAddMode>("webcam")
+  const [cameraNameInput, setCameraNameInput] = useState("")
+  const [cameraLocationInput, setCameraLocationInput] = useState("")
+  const [cameraResolutionInput, setCameraResolutionInput] = useState("1080p")
+  const [selectedWebcamDeviceId, setSelectedWebcamDeviceId] = useState<string>("")
+  const [cctvStreamType, setCctvStreamType] = useState<"rtsp" | "hls" | "http">("rtsp")
+  const [cctvStreamUrl, setCctvStreamUrl] = useState("")
+  const [cctvUsername, setCctvUsername] = useState("")
+  const [cctvPassword, setCctvPassword] = useState("")
+  const [cctvPort, setCctvPort] = useState("")
+  const [cctvConnectionStatus, setCctvConnectionStatus] = useState<CctvConnectionStatus>("idle")
+  const [cctvConnectionMessage, setCctvConnectionMessage] = useState("")
+  const [hasLoadedPersistedState, setHasLoadedPersistedState] = useState(false)
 
   // Auto-assign first device to feed "1" once devices load
   useEffect(() => {
@@ -321,6 +388,60 @@ export function LiveFeedWall() {
     }
   }, [devices])
 
+  useEffect(() => {
+    try {
+      const persistedFeedsRaw = window.localStorage.getItem(CUSTOM_FEEDS_STORAGE_KEY)
+      if (persistedFeedsRaw) {
+        const parsedFeeds = JSON.parse(persistedFeedsRaw) as CameraFeed[]
+        if (Array.isArray(parsedFeeds)) {
+          setCustomFeeds(
+            parsedFeeds.filter(
+              (feed) =>
+                typeof feed.id === "string" &&
+                typeof feed.name === "string" &&
+                typeof feed.location === "string"
+            )
+          )
+        }
+      }
+
+      const persistedMapRaw = window.localStorage.getItem(FEED_DEVICE_MAP_STORAGE_KEY)
+      if (persistedMapRaw) {
+        const parsedMap = JSON.parse(persistedMapRaw) as Record<string, string>
+        if (parsedMap && typeof parsedMap === "object") {
+          setFeedDeviceMap(parsedMap)
+        }
+      }
+
+      const persistedDeletedFeedsRaw = window.localStorage.getItem(DELETED_FEEDS_STORAGE_KEY)
+      if (persistedDeletedFeedsRaw) {
+        const parsedDeletedFeedIds = JSON.parse(persistedDeletedFeedsRaw) as string[]
+        if (Array.isArray(parsedDeletedFeedIds)) {
+          setDeletedFeedIds(parsedDeletedFeedIds.filter((id) => typeof id === "string"))
+        }
+      }
+    } catch {
+      // Ignore malformed persisted state and continue with defaults.
+    } finally {
+      setHasLoadedPersistedState(true)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!hasLoadedPersistedState) return
+    window.localStorage.setItem(CUSTOM_FEEDS_STORAGE_KEY, JSON.stringify(customFeeds))
+  }, [customFeeds, hasLoadedPersistedState])
+
+  useEffect(() => {
+    if (!hasLoadedPersistedState) return
+    window.localStorage.setItem(FEED_DEVICE_MAP_STORAGE_KEY, JSON.stringify(feedDeviceMap))
+  }, [feedDeviceMap, hasLoadedPersistedState])
+
+  useEffect(() => {
+    if (!hasLoadedPersistedState) return
+    window.localStorage.setItem(DELETED_FEEDS_STORAGE_KEY, JSON.stringify(deletedFeedIds))
+  }, [deletedFeedIds, hasLoadedPersistedState])
+
   // ── Grid / UI state ──
   const [gridSize, setGridSize] = useState<"2x2" | "3x3" | "4x4">("3x3")
   const [selectedFeeds, setSelectedFeeds] = useState<string[]>([])
@@ -328,6 +449,8 @@ export function LiveFeedWall() {
   const [searchQuery, setSearchQuery] = useState("")
   const [autoArrange, setAutoArrange] = useState(true)
   const [showAISuggestions, setShowAISuggestions] = useState(true)
+  const allFeeds = [...MOCK_FEEDS, ...customFeeds]
+  const visibleFeeds = allFeeds.filter((feed) => !deletedFeedIds.includes(feed.id))
 
   // ── Playback state (fullscreen modal) ──
   const [isPlaying, setIsPlaying] = useState(true)
@@ -340,6 +463,8 @@ export function LiveFeedWall() {
   // Webcam stream for the currently fullscreened feed
   const fullscreenDeviceId = fullscreenFeed ? feedDeviceMap[fullscreenFeed] : undefined
   const { stream: fullscreenStream, status: fullscreenStreamStatus } = useWebcamStream(fullscreenDeviceId)
+  const fullscreenFeedData = fullscreenFeed ? allFeeds.find((f) => f.id === fullscreenFeed) : undefined
+  const isFullscreenCctv = fullscreenFeedData?.sourceType === "cctv"
 
   // ── Grid helpers ──
   const getGridDimensions = () => {
@@ -353,7 +478,7 @@ export function LiveFeedWall() {
   const { cols, maxFeeds } = getGridDimensions()
 
   const getDisplayFeeds = (): CameraFeed[] => {
-    let feeds = MOCK_FEEDS.filter(
+    let feeds = visibleFeeds.filter(
       (f) =>
         f.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         f.location.toLowerCase().includes(searchQuery.toLowerCase())
@@ -423,6 +548,154 @@ export function LiveFeedWall() {
   const assignDevice = (feedId: string, deviceId: string) =>
     setFeedDeviceMap((prev) => ({ ...prev, [feedId]: deviceId }))
 
+  const handleDeleteCamera = (feedId: string) => {
+    const feedToDelete = allFeeds.find((feed) => feed.id === feedId)
+    const confirmed = window.confirm(
+      `Are you sure you want to delete ${feedToDelete?.name ?? "this camera"}?`
+    )
+    if (!confirmed) return
+
+    const isDefaultFeed = MOCK_FEEDS.some((feed) => feed.id === feedId)
+    if (isDefaultFeed) {
+      setDeletedFeedIds((prev) => (prev.includes(feedId) ? prev : [...prev, feedId]))
+    } else {
+      setCustomFeeds((prev) => prev.filter((feed) => feed.id !== feedId))
+    }
+
+    setFeedDeviceMap((prev) => {
+      if (!prev[feedId]) return prev
+      const next = { ...prev }
+      delete next[feedId]
+      return next
+    })
+    setSelectedFeeds((prev) => prev.filter((id) => id !== feedId))
+    setFullscreenFeed((prev) => (prev === feedId ? null : prev))
+  }
+
+  const resetAddCameraForm = () => {
+    setCameraNameInput("")
+    setCameraLocationInput("")
+    setCameraResolutionInput("1080p")
+    setSelectedWebcamDeviceId(devices[0]?.deviceId ?? "")
+    setCctvStreamType("rtsp")
+    setCctvStreamUrl("")
+    setCctvUsername("")
+    setCctvPassword("")
+    setCctvPort("")
+    setCctvConnectionStatus("idle")
+    setCctvConnectionMessage("")
+  }
+
+  useEffect(() => {
+    if (!selectedWebcamDeviceId && devices[0]?.deviceId) {
+      setSelectedWebcamDeviceId(devices[0].deviceId)
+    }
+  }, [devices, selectedWebcamDeviceId])
+
+  const nextCustomFeedId = () => {
+    const maxId = allFeeds.reduce((max, feed) => {
+      const asNumber = Number(feed.id)
+      return Number.isFinite(asNumber) ? Math.max(max, asNumber) : max
+    }, 0)
+    return String(maxId + 1)
+  }
+
+  const testCctvConnection = async () => {
+    if (!cctvStreamUrl.trim()) {
+      setCctvConnectionStatus("error")
+      setCctvConnectionMessage("Enter a stream URL before testing.")
+      return
+    }
+    if (cctvStreamType === "rtsp") {
+      setCctvConnectionStatus("error")
+      setCctvConnectionMessage("RTSP cannot be previewed directly in-browser. Use HLS/HTTP URL for preview.")
+      return
+    }
+
+    setCctvConnectionStatus("testing")
+    setCctvConnectionMessage("Testing stream connection...")
+
+    await new Promise<void>((resolve) => {
+      const video = document.createElement("video")
+      video.muted = true
+      video.playsInline = true
+      video.src = cctvStreamUrl.trim()
+
+      const done = (ok: boolean, message: string) => {
+        setCctvConnectionStatus(ok ? "success" : "error")
+        setCctvConnectionMessage(message)
+        video.pause()
+        video.removeAttribute("src")
+        video.load()
+        resolve()
+      }
+
+      const timeoutId = window.setTimeout(() => {
+        done(false, "Connection test timed out. Verify stream URL and network access.")
+      }, 6000)
+
+      video.onloadeddata = () => {
+        window.clearTimeout(timeoutId)
+        done(true, "Connection successful. Stream preview is available.")
+      }
+      video.onerror = () => {
+        window.clearTimeout(timeoutId)
+        done(false, "Unable to load stream. Check URL, credentials, and CORS settings.")
+      }
+    })
+  }
+
+  const handleAddCamera = () => {
+    const trimmedName = cameraNameInput.trim()
+    const trimmedLocation = cameraLocationInput.trim() || "Custom Location"
+    if (!trimmedName) return
+
+    const id = nextCustomFeedId()
+
+    if (addMode === "webcam") {
+      if (!selectedWebcamDeviceId) return
+      const newFeed: CameraFeed = {
+        id,
+        name: trimmedName,
+        location: trimmedLocation,
+        status: "online",
+        lastActivity: "Live",
+        priority: 6,
+        isRecording: true,
+        hasAudio: false,
+        resolution: cameraResolutionInput,
+        sourceType: "webcam",
+        deviceId: selectedWebcamDeviceId,
+      }
+      setCustomFeeds((prev) => [...prev, newFeed])
+      assignDevice(id, selectedWebcamDeviceId)
+    } else {
+      if (!cctvStreamUrl.trim()) {
+        setCctvConnectionStatus("error")
+        setCctvConnectionMessage("Stream URL is required for CCTV camera.")
+        return
+      }
+      const newFeed: CameraFeed = {
+        id,
+        name: trimmedName,
+        location: trimmedLocation,
+        status: "online",
+        lastActivity: "Live",
+        priority: 6,
+        isRecording: true,
+        hasAudio: false,
+        resolution: cameraResolutionInput,
+        sourceType: "cctv",
+        cctvStreamType,
+        cctvStreamUrl: cctvStreamUrl.trim(),
+      }
+      setCustomFeeds((prev) => [...prev, newFeed])
+    }
+
+    setIsAddCameraOpen(false)
+    resetAddCameraForm()
+  }
+
   // ── Status helpers ──
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -435,6 +708,9 @@ export function LiveFeedWall() {
   // ── Per-grid-cell stream (only rendered for feeds that have a deviceId) ──
   // We use a child component so each feed gets its own hook instance.
   function GridCellStream({ feed }: { feed: CameraFeed }) {
+    if (feed.sourceType === "cctv") {
+      return <CctvPreview streamUrl={feed.cctvStreamUrl} />
+    }
     const deviceId = feedDeviceMap[feed.id]
     const { stream } = useWebcamStream(deviceId)
     return <WebcamPreview stream={stream} muted />
@@ -450,6 +726,19 @@ export function LiveFeedWall() {
         </div>
         <div className="flex items-center gap-3">
           <Button
+            variant="outline"
+            size="sm"
+            className="bg-transparent"
+            onClick={() => {
+              resetAddCameraForm()
+              setAddMode("webcam")
+              setIsAddCameraOpen(true)
+            }}
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            Add Camera
+          </Button>
+          <Button
             variant={autoArrange ? "default" : "outline"}
             size="sm"
             onClick={() => setAutoArrange((v) => !v)}
@@ -464,53 +753,6 @@ export function LiveFeedWall() {
           </Button>
         </div>
       </div>
-
-      {/* ── Webcam device assignment (shown only when real devices exist) ── */}
-      {devices.length > 0 && (
-        <Card className="border-slate-700/50">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm flex items-center gap-2">
-              <Camera className="w-4 h-4" />
-              Assign real webcams to feeds
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-wrap gap-3">
-              {MOCK_FEEDS.slice(0, devices.length + 1).map((feed) => (
-                <div key={feed.id} className="flex items-center gap-2">
-                  <span className="text-xs text-muted-foreground w-20">{feed.name}</span>
-                  <Select
-                    value={feedDeviceMap[feed.id] ?? "none"}
-                    onValueChange={(val) => {
-                      if (val === "none") {
-                        setFeedDeviceMap((prev) => {
-                          const next = { ...prev }
-                          delete next[feed.id]
-                          return next
-                        })
-                      } else {
-                        assignDevice(feed.id, val)
-                      }
-                    }}
-                  >
-                    <SelectTrigger className="w-44 h-7 text-xs">
-                      <SelectValue placeholder="— mock —" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">— mock only —</SelectItem>
-                      {devices.map((d) => (
-                        <SelectItem key={d.deviceId} value={d.deviceId}>
-                          {d.label || `Camera ${d.deviceId.slice(0, 8)}`}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
 
       {/* ── AI Notifications ── */}
       {showAISuggestions && AI_NOTIFICATIONS.length > 0 && (
@@ -604,8 +846,13 @@ export function LiveFeedWall() {
                 {/* Real webcam stream (if assigned) */}
                 <GridCellStream feed={feed} />
 
+                {/* Camera-off view */}
+                {feed.status === "offline" && (
+                  <CameraClosedView name={feed.name} location={feed.location} />
+                )}
+
                 {/* Placeholder when no real stream */}
-                {!feedDeviceMap[feed.id] && (
+                {feed.status !== "offline" && !feedDeviceMap[feed.id] && feed.sourceType !== "cctv" && (
                   <div className="absolute inset-0 flex items-center justify-center">
                     <div className="text-center">
                       <Camera
@@ -657,6 +904,14 @@ export function LiveFeedWall() {
                   <Button size="icon" variant="secondary" className="w-8 h-8">
                     {feed.hasAudio ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
                   </Button>
+                  <Button
+                    size="icon"
+                    variant="destructive"
+                    className="w-8 h-8"
+                    onClick={() => handleDeleteCamera(feed.id)}
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
                 </div>
               </div>
 
@@ -675,7 +930,13 @@ export function LiveFeedWall() {
                 <div className="flex items-center justify-between text-xs text-muted-foreground mt-1">
                   <div className="flex items-center gap-1">
                     <Clock className="w-3 h-3" />
-                    <span>{feedDeviceMap[feed.id] ? "Live (webcam)" : feed.lastActivity}</span>
+                    <span>
+                      {feed.sourceType === "cctv"
+                        ? `Live (${feed.cctvStreamType ?? "cctv"})`
+                        : feedDeviceMap[feed.id]
+                          ? "Live (webcam)"
+                          : feed.lastActivity}
+                    </span>
                   </div>
                   <Button
                     size="sm"
@@ -727,27 +988,38 @@ export function LiveFeedWall() {
                 <div className="relative h-full bg-black rounded-lg overflow-hidden">
 
                   {/* Real stream in fullscreen */}
-                  {fullscreenStream && (
+                  {isFullscreenCctv && fullscreenFeedData?.cctvStreamUrl && (
+                    <CctvPreview streamUrl={fullscreenFeedData.cctvStreamUrl} muted={isMuted} />
+                  )}
+
+                  {fullscreenStream && !isFullscreenCctv && (
                     <WebcamPreview stream={fullscreenStream} muted={isMuted} />
                   )}
 
                   {/* Status / loading overlay */}
-                  {fullscreenStreamStatus === "loading" && (
+                  {fullscreenStreamStatus === "loading" && !isFullscreenCctv && (
                     <div className="absolute inset-0 flex items-center justify-center bg-black/70 z-10">
                       <p className="text-white text-sm">Connecting to camera…</p>
                     </div>
                   )}
 
                   {/* Placeholder when no real device assigned */}
-                  {!feedDeviceMap[fullscreenFeed] && (
+                  {fullscreenFeedData?.status === "offline" && (
+                    <CameraClosedView
+                      name={fullscreenFeedData.name}
+                      location={fullscreenFeedData.location}
+                    />
+                  )}
+
+                  {!isFullscreenCctv && fullscreenFeedData?.status !== "offline" && !feedDeviceMap[fullscreenFeed] && (
                     <div className="absolute inset-0 flex items-center justify-center">
                       <div className="text-center">
                         <Camera className="w-24 h-24 text-green-500 mx-auto mb-4" />
                         <p className="text-white text-xl font-medium">
-                          {MOCK_FEEDS.find((f) => f.id === fullscreenFeed)?.name}
+                          {allFeeds.find((f) => f.id === fullscreenFeed)?.name}
                         </p>
                         <p className="text-gray-300">
-                          {MOCK_FEEDS.find((f) => f.id === fullscreenFeed)?.location}
+                          {allFeeds.find((f) => f.id === fullscreenFeed)?.location}
                         </p>
                       </div>
                     </div>
@@ -812,7 +1084,7 @@ export function LiveFeedWall() {
                           </Button>
                         )}
                         <div className="text-white text-sm">
-                          {MOCK_FEEDS.find((f) => f.id === fullscreenFeed)?.resolution}
+                          {allFeeds.find((f) => f.id === fullscreenFeed)?.resolution}
                         </div>
                       </div>
                     </div>
@@ -824,6 +1096,143 @@ export function LiveFeedWall() {
           </div>
         </div>
       )}
+
+      <Dialog open={isAddCameraOpen} onOpenChange={setIsAddCameraOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add Camera</DialogTitle>
+            <DialogDescription>Select source type and configure connection details.</DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <p className="text-sm text-muted-foreground">Source type</p>
+              <Select value={addMode} onValueChange={(v: CameraAddMode) => setAddMode(v)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="webcam">Webcam</SelectItem>
+                  <SelectItem value="cctv">CCTV / IP Camera</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <Input
+              placeholder="Camera Name"
+              value={cameraNameInput}
+              onChange={(e) => setCameraNameInput(e.target.value)}
+            />
+            <Input
+              placeholder="Location"
+              value={cameraLocationInput}
+              onChange={(e) => setCameraLocationInput(e.target.value)}
+            />
+            <Select value={cameraResolutionInput} onValueChange={setCameraResolutionInput}>
+              <SelectTrigger>
+                <SelectValue placeholder="Resolution" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="720p">720p</SelectItem>
+                <SelectItem value="1080p">1080p</SelectItem>
+                <SelectItem value="4K">4K</SelectItem>
+              </SelectContent>
+            </Select>
+
+            {addMode === "webcam" && (
+              <Select value={selectedWebcamDeviceId} onValueChange={setSelectedWebcamDeviceId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select webcam device" />
+                </SelectTrigger>
+                <SelectContent>
+                  {devices.map((d) => (
+                    <SelectItem key={d.deviceId} value={d.deviceId}>
+                      {d.label || `Camera ${d.deviceId.slice(0, 8)}`}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+
+            {addMode === "cctv" && (
+              <>
+                <Select value={cctvStreamType} onValueChange={(v: "rtsp" | "hls" | "http") => setCctvStreamType(v)}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Stream type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="rtsp">RTSP</SelectItem>
+                    <SelectItem value="hls">HLS</SelectItem>
+                    <SelectItem value="http">HTTP</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Input
+                  placeholder={cctvStreamType === "rtsp" ? "rtsp://..." : "https://..."}
+                  value={cctvStreamUrl}
+                  onChange={(e) => setCctvStreamUrl(e.target.value)}
+                />
+                <div className="grid grid-cols-2 gap-2">
+                  <Input
+                    placeholder="Username (optional)"
+                    value={cctvUsername}
+                    onChange={(e) => setCctvUsername(e.target.value)}
+                  />
+                  <Input
+                    placeholder="Password (optional)"
+                    type="password"
+                    value={cctvPassword}
+                    onChange={(e) => setCctvPassword(e.target.value)}
+                  />
+                </div>
+                <Input placeholder="Port (optional)" value={cctvPort} onChange={(e) => setCctvPort(e.target.value)} />
+                <Button variant="outline" className="bg-transparent" onClick={() => void testCctvConnection()}>
+                  Test Connection
+                </Button>
+                {cctvConnectionMessage && (
+                  <p
+                    className={`text-xs ${
+                      cctvConnectionStatus === "success"
+                        ? "text-green-500"
+                        : cctvConnectionStatus === "error"
+                          ? "text-red-500"
+                          : "text-muted-foreground"
+                    }`}
+                  >
+                    {cctvConnectionMessage}
+                  </p>
+                )}
+                {cctvConnectionStatus === "success" && cctvStreamType !== "rtsp" && cctvStreamUrl && (
+                  <div className="relative aspect-video bg-black rounded-md overflow-hidden">
+                    <CctvPreview streamUrl={cctvStreamUrl} />
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              className="bg-transparent"
+              onClick={() => {
+                setIsAddCameraOpen(false)
+                resetAddCameraForm()
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleAddCamera}
+              disabled={
+                !cameraNameInput.trim() ||
+                (addMode === "webcam" ? !selectedWebcamDeviceId : !cctvStreamUrl.trim())
+              }
+            >
+              Save Camera
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
