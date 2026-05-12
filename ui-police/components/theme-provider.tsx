@@ -38,9 +38,15 @@ export function ThemeProvider({
   languageStorageKey = "vite-ui-language",
   ...props
 }: ThemeProviderProps) {
-  const [theme, setTheme] = useState<Theme>(() => (localStorage.getItem(storageKey) as Theme) || defaultTheme)
+  const [theme, setTheme] = useState<Theme>(() => {
+    if (typeof window === "undefined") return defaultTheme
+    return (window.localStorage.getItem(storageKey) as Theme) || defaultTheme
+  })
   const [language, setLanguage] = useState<Language>(
-    () => (localStorage.getItem(languageStorageKey) as Language) || defaultLanguage,
+    () => {
+      if (typeof window === "undefined") return defaultLanguage
+      return (window.localStorage.getItem(languageStorageKey) as Language) || defaultLanguage
+    },
   )
 
   useEffect(() => {
@@ -62,11 +68,15 @@ export function ThemeProvider({
     theme,
     language,
     setTheme: (theme: Theme) => {
-      localStorage.setItem(storageKey, theme)
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(storageKey, theme)
+      }
       setTheme(theme)
     },
     setLanguage: (language: Language) => {
-      localStorage.setItem(languageStorageKey, language)
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(languageStorageKey, language)
+      }
       setLanguage(language)
     },
   }

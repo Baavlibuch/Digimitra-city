@@ -1,35 +1,32 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect } from "react"
+import { useRouter } from "next/navigation"
 import { Dashboard } from "@/components/dashboard"
-import { LoginPage } from "@/components/login-page"
 import { ThemeProvider } from "@/components/theme-provider"
-import { getStoredAccessToken } from "@/src/lib/auth-token"
+import { useAuth } from "@/components/auth-provider"
 
 export default function Home() {
-  const [sessionKnown, setSessionKnown] = useState(false)
-  const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const router = useRouter()
+  const { isAuthenticated, isCheckingAuth, logout } = useAuth()
 
   useEffect(() => {
-    setIsAuthenticated(Boolean(getStoredAccessToken()))
-    setSessionKnown(true)
-  }, [])
-
-  if (!sessionKnown) {
-    return <div className="min-h-screen bg-background" aria-busy="true" />
-  }
-
-  if (!isAuthenticated) {
-    return (
-      <ThemeProvider defaultTheme="dark" defaultLanguage="en">
-        <LoginPage onLogin={() => setIsAuthenticated(true)} />
-      </ThemeProvider>
-    )
-  }
+    if (!isCheckingAuth && !isAuthenticated) {
+      router.replace("/login")
+    }
+  }, [isAuthenticated, isCheckingAuth, router])
 
   return (
     <ThemeProvider defaultTheme="dark" defaultLanguage="en">
-      <Dashboard />
+      {isCheckingAuth ? (
+        <div className="min-h-screen bg-background" aria-busy="true" />
+      ) : (
+      <Dashboard
+        onSignOut={() => {
+          void logout()
+        }}
+      />
+      )}
     </ThemeProvider>
   )
 }

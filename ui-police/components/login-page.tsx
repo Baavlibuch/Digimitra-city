@@ -1,7 +1,9 @@
 "use client"
 
 import { useState } from "react"
-import { loginWithPassword } from "@/src/lib/auth-token"
+import Link from "next/link"
+import { useRouter } from "next/navigation"
+import { useAuth } from "@/components/auth-provider"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -19,13 +21,10 @@ import {
   AlertTriangle,
 } from "lucide-react"
 
-interface LoginPageProps {
-  onLogin: () => void
-}
-
-export function LoginPage({ onLogin }: LoginPageProps) {
-  const [step, setStep] = useState(1)
-  const [policeId, setPoliceId] = useState("")
+export function LoginPage() {
+  const router = useRouter()
+  const { signIn } = useAuth()
+  const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [showPassword, setShowPassword] = useState(false)
   const [authMethod, setAuthMethod] = useState<"biometric" | "token" | "otp">("biometric")
@@ -53,10 +52,14 @@ export function LoginPage({ onLogin }: LoginPageProps) {
     setLoginError(null)
     setIsLoading(true)
     try {
-      await loginWithPassword(policeId, password)
-      onLogin()
+      await signIn(email, password)
+      router.replace("/")
     } catch (e) {
-      setLoginError(e instanceof Error ? e.message : "Login failed")
+      const errorMessage = e instanceof Error ? e.message : "Login failed"
+      setLoginError(errorMessage)
+      if (errorMessage.toLowerCase().includes("verify")) {
+        router.push(`/verify?email=${encodeURIComponent(email.trim().toLowerCase())}`)
+      }
     } finally {
       setIsLoading(false)
     }
@@ -73,6 +76,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
       title: "Secure Police Surveillance Portal",
       subtitle: "Authorized Personnel Only",
       policeId: "Police ID / Badge Number",
+      email: "Official Email ID",
       password: "Password",
       biometric: "Biometric Authentication",
       token: "Smart Card / USB Token",
@@ -94,6 +98,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
       title: "सुरक्षित पुलिस निगरानी पोर्टल",
       subtitle: "केवल अधिकृत कर्मचारी",
       policeId: "पुलिस आईडी / बैज नंबर",
+      email: "आधिकारिक ईमेल आईडी",
       password: "पासवर्ड",
       biometric: "बायोमेट्रिक प्रमाणीकरण",
       token: "स्मार्ट कार्ड / USB टोकन",
@@ -115,7 +120,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
   const t = translations[language as keyof typeof translations]
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-linear-to-br from-slate-900 via-blue-900 to-slate-900 flex items-center justify-center p-4">
       {/* Background Pattern */}
       <div className="absolute inset-0 bg-[url('data:image/svg+xml,%3Csvg width%3D%2260%22 height%3D%2260%22 viewBox%3D%220 0 60 60%22 xmlns%3D%22http://www.w3.org/2000/svg%22%3E%3Cg fill%3D%22none%22 fillRule%3D%22evenodd%22%3E%3Cg fill%3D%22%23ffffff%22 fillOpacity%3D%220.02%22%3E%3Ccircle cx%3D%2230%22 cy%3D%2230%22 r%3D%222%22/%3E%3C/g%3E%3C/g%3E%3C/svg%3E')] opacity-20"></div>
 
@@ -123,7 +128,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
         {/* Header */}
         <div className="text-center mb-8">
           <div className="flex items-center justify-center gap-4 mb-4">
-            <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-blue-600 rounded-full flex items-center justify-center">
+            <div className="w-16 h-16 bg-linear-to-br from-blue-500 to-blue-600 rounded-full flex items-center justify-center">
               <Shield className="w-8 h-8 text-white" />
             </div>
             <div className="text-right">
@@ -144,18 +149,18 @@ export function LoginPage({ onLogin }: LoginPageProps) {
         {/* Main Login Card */}
         <Card className="bg-slate-800/80 backdrop-blur-lg border-slate-700/50 shadow-2xl">
           <CardHeader className="text-center">
-            <CardTitle className="text-white">DM</CardTitle>
+            <CardTitle className="text-white"></CardTitle>
           </CardHeader>
           <CardContent className="space-y-6">
             {/* Step 1: Police ID */}
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">{t.policeId}</label>
+                <label className="block text-sm font-medium text-slate-300 mb-2">{t.email}</label>
                 <Input
-                  type="text"
-                  value={policeId}
-                  onChange={(e) => setPoliceId(e.target.value)}
-                  placeholder="Enter your police ID"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="officer@department.gov.in"
                   className="bg-slate-700/50 border-slate-600 text-white placeholder:text-slate-400"
                 />
               </div>
@@ -262,8 +267,8 @@ export function LoginPage({ onLogin }: LoginPageProps) {
               {/* Authenticate Button */}
               <Button
                 onClick={() => void handleAuthenticate()}
-                disabled={!policeId.trim() || isLoading}
-                className="w-full bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-semibold py-3 text-lg"
+                disabled={!email.trim() || !password || isLoading}
+                className="w-full bg-linear-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-semibold py-3 text-lg"
               >
                 {isLoading ? (
                   <div className="flex items-center gap-2">
@@ -274,6 +279,12 @@ export function LoginPage({ onLogin }: LoginPageProps) {
                   t.authenticate
                 )}
               </Button>
+              <p className="text-center text-sm text-slate-300">
+                Don't have an account?{" "}
+                <Link href="/register" className="text-blue-400 hover:text-blue-300 underline underline-offset-2">
+                  Register
+                </Link>
+              </p>
             </div>
           </CardContent>
         </Card>

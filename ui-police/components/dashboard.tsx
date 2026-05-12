@@ -13,12 +13,26 @@ import { LiveFeedWall } from "@/components/live-feed-wall"
 import { LoadingScreen } from "@/components/loading-screen"
 import { Settings } from "@/components/settings"
 import { Camera, AlertTriangle, Activity, MapPin, Search, Calendar, Mic } from "lucide-react"
+import {
+  CAMERA_FEEDS_SYNC_EVENT,
+  buildVisibleFeeds,
+  calculateCoverageSummary,
+  formatCoverageSummaryValue,
+  isFeedActive,
+  readPersistedCameraState,
+} from "@/lib/camera-feeds"
 
-export function Dashboard() {
+interface DashboardProps {
+  onSignOut: () => void
+}
+
+export function Dashboard({ onSignOut }: DashboardProps) {
   const [activeSection, setActiveSection] = useState("dashboard")
   const [isLoading, setIsLoading] = useState(true)
-  const [cameraCount, setCameraCount] = useState(0)
-  const [onlineCount, setOnlineCount] = useState(0)
+  const [isSigningOut, setIsSigningOut] = useState(false)
+  const [signOutError, setSignOutError] = useState<string | null>(null)
+  const [activeCameraCount, setActiveCameraCount] = useState(0)
+  const [coverageAreaValue, setCoverageAreaValue] = useState("0")
   const [eventCount, setEventCount] = useState(0)
   const [recentEvents, setRecentEvents] = useState<Array<{ id: string; type: string; camera: string; time: string }>>([])
 
@@ -34,21 +48,29 @@ export function Dashboard() {
     let cancelled = false
 
     const syncCameraStats = async () => {
-      if (!navigator.mediaDevices?.enumerateDevices) {
-        setCameraCount(0)
-        setOnlineCount(0)
-        return
-      }
       try {
-        const devices = await navigator.mediaDevices.enumerateDevices()
+        const { customFeeds, feedDeviceMap, deletedFeedIds } = readPersistedCameraState()
+        const visibleFeeds = buildVisibleFeeds({ customFeeds, deletedFeedIds })
+        const devices = navigator.mediaDevices?.enumerateDevices ? await navigator.mediaDevices.enumerateDevices() : []
+        const validWebcamDeviceIds = new Set(
+          devices.filter((device) => device.kind === "videoinput").map((device) => device.deviceId)
+        )
+        const activeFeeds = visibleFeeds.filter((feed) => {
+          if (!isFeedActive(feed, feedDeviceMap)) return false
+          if (feed.sourceType === "cctv") return true
+          const mappedDeviceId = feedDeviceMap[feed.id] ?? feed.deviceId
+          if (!mappedDeviceId) return false
+          if (validWebcamDeviceIds.size === 0) return true
+          return validWebcamDeviceIds.has(mappedDeviceId)
+        })
+
         if (cancelled) return
-        const cameraDevices = devices.filter((device) => device.kind === "videoinput")
-        setCameraCount(cameraDevices.length)
-        setOnlineCount(cameraDevices.length)
+        setActiveCameraCount(activeFeeds.length)
+        setCoverageAreaValue(formatCoverageSummaryValue(calculateCoverageSummary(activeFeeds)))
       } catch {
         if (cancelled) return
-        setCameraCount(0)
-        setOnlineCount(0)
+        setActiveCameraCount(0)
+        setCoverageAreaValue("0")
       }
     }
 
@@ -59,20 +81,40 @@ export function Dashboard() {
     const onDeviceChange = () => {
       void syncCameraStats()
     }
+    const onCameraFeedsSync = () => {
+      void syncCameraStats()
+    }
+    window.addEventListener("storage", onCameraFeedsSync)
+    window.addEventListener(CAMERA_FEEDS_SYNC_EVENT, onCameraFeedsSync)
     navigator.mediaDevices?.addEventListener?.("devicechange", onDeviceChange)
 
     return () => {
       cancelled = true
+      window.removeEventListener("storage", onCameraFeedsSync)
+      window.removeEventListener(CAMERA_FEEDS_SYNC_EVENT, onCameraFeedsSync)
       navigator.mediaDevices?.removeEventListener?.("devicechange", onDeviceChange)
     }
   }, [])
 
   const stats = [
-    { label: "Active Cameras", value: String(onlineCount), icon: Camera, status: "online" },
+    { label: "Active Cameras", value: String(activeCameraCount), icon: Camera, status: "online" },
     { label: "Live Alerts", value: String(eventCount), icon: AlertTriangle, status: eventCount > 0 ? "warning" : "online" },
     { label: "System Status", value: "Operational", icon: Activity, status: "online" },
-    { label: "Coverage Areas", value: String(cameraCount), icon: MapPin, status: "online" },
+    { label: "Coverage Areas", value: coverageAreaValue, icon: MapPin, status: "online" },
   ]
+
+  const handleSignOut = async () => {
+    if (isSigningOut) return
+    setSignOutError(null)
+    setIsSigningOut(true)
+    try {
+      onSignOut()
+    } catch (e) {
+      setSignOutError(e instanceof Error ? e.message : "Unable to sign out right now.")
+    } finally {
+      setIsSigningOut(false)
+    }
+  }
 
   const renderSection = () => {
     switch (activeSection) {
@@ -203,7 +245,20 @@ export function Dashboard() {
 
   return (
     <div className="min-h-screen bg-background">
-      <Navigation activeSection={activeSection} onSectionChange={setActiveSection} />
+      <Navigation
+        activeSection={activeSection}
+        onSectionChange={setActiveSection}
+        onSignOut={() => void handleSignOut()}
+        isSigningOut={isSigningOut}
+      />
+
+      {signOutError && (
+        <div className="container mx-auto px-6 pt-4">
+          <p className="text-sm text-red-400" role="alert">
+            {signOutError}
+          </p>
+        </div>
+      )}
 
       <main className="container mx-auto px-6 py-8">{renderSection()}</main>
 

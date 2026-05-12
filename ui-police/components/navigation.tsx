@@ -1,14 +1,16 @@
 "use client"
 
 import { Button } from "@/components/ui/button"
-import { LayoutDashboard, Map, AlertTriangle, Monitor, Settings, Brain } from "lucide-react"
+import { LayoutDashboard, Map, AlertTriangle, Monitor, Settings, Brain, LogOut } from "lucide-react"
 
 interface NavigationProps {
   activeSection: string
   onSectionChange: (section: string) => void
+  onSignOut: () => void
+  isSigningOut?: boolean
 }
 
-export function Navigation({ activeSection, onSectionChange }: NavigationProps) {
+export function Navigation({ activeSection, onSectionChange, onSignOut, isSigningOut = false }: NavigationProps) {
   const navItems = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
     { id: "map", label: "Map View", icon: Map },
@@ -47,6 +49,20 @@ export function Navigation({ activeSection, onSectionChange }: NavigationProps) 
                 <span className="hidden md:inline">{item.label}</span>
               </Button>
             ))}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onSignOut}
+              disabled={isSigningOut}
+              className="flex items-center gap-2 hover:bg-muted/50"
+            >
+              {isSigningOut ? (
+                <div className="w-4 h-4 border-2 border-current/40 border-t-current rounded-full animate-spin" />
+              ) : (
+                <LogOut className="w-4 h-4" />
+              )}
+              <span className="hidden md:inline">{isSigningOut ? "Signing Out..." : "Sign Out"}</span>
+            </Button>
           </div>
         </div>
       </div>

@@ -35,26 +35,16 @@ import {
   Plus,
   Trash2,
 } from "lucide-react"
+import {
+  CUSTOM_FEEDS_STORAGE_KEY,
+  DEFAULT_CAMERA_FEEDS,
+  DELETED_FEEDS_STORAGE_KEY,
+  FEED_DEVICE_MAP_STORAGE_KEY,
+  emitCameraFeedsSync,
+  type CameraFeed,
+} from "@/lib/camera-feeds"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-
-interface CameraFeed {
-  id: string
-  name: string
-  location: string
-  status: "online" | "offline" | "alert"
-  lastActivity: string
-  aiSuggestion?: string
-  priority: number
-  isRecording: boolean
-  hasAudio: boolean
-  resolution: string
-  /** deviceId from enumerateDevices — only set for real webcam slots */
-  deviceId?: string
-  sourceType?: "webcam" | "cctv"
-  cctvStreamUrl?: string
-  cctvStreamType?: "rtsp" | "hls" | "http"
-}
 
 interface AINotification {
   id: string
@@ -68,9 +58,6 @@ interface AINotification {
 type StreamStatus = "idle" | "loading" | "live" | "error"
 type CameraAddMode = "webcam" | "cctv"
 type CctvConnectionStatus = "idle" | "testing" | "success" | "error"
-const CUSTOM_FEEDS_STORAGE_KEY = "digimitra.liveFeedWall.customFeeds.v1"
-const FEED_DEVICE_MAP_STORAGE_KEY = "digimitra.liveFeedWall.feedDeviceMap.v1"
-const DELETED_FEEDS_STORAGE_KEY = "digimitra.liveFeedWall.deletedFeedIds.v1"
 
 // ─── Webcam hook (logic from text 2) ─────────────────────────────────────────
 
@@ -217,114 +204,6 @@ function CameraClosedView({ name, location }: { name: string; location: string }
 
 // ─── Mock data ────────────────────────────────────────────────────────────────
 
-const MOCK_FEEDS: CameraFeed[] = [
-  {
-    id: "1",
-    name: "Camera 01",
-    location: "Main Entrance",
-    status: "online",
-    lastActivity: "Live",
-    aiSuggestion: "High traffic area – recommended for monitoring",
-    priority: 9,
-    isRecording: true,
-    hasAudio: true,
-    resolution: "1080p",
-  },
-  {
-    id: "2",
-    name: "Camera 02",
-    location: "Parking Lot A",
-    status: "alert",
-    lastActivity: "Motion detected 30s ago",
-    aiSuggestion: "⚠️ Suspicious motion detected at 02:14",
-    priority: 10,
-    isRecording: true,
-    hasAudio: false,
-    resolution: "720p",
-  },
-  {
-    id: "3",
-    name: "Camera 03",
-    location: "Emergency Exit",
-    status: "online",
-    lastActivity: "Live",
-    aiSuggestion: "Person loitering detected – want to zoom in?",
-    priority: 7,
-    isRecording: true,
-    hasAudio: true,
-    resolution: "1080p",
-  },
-  {
-    id: "4",
-    name: "Camera 04",
-    location: "Loading Dock",
-    status: "offline",
-    lastActivity: "1 hour ago",
-    priority: 3,
-    isRecording: false,
-    hasAudio: false,
-    resolution: "720p",
-  },
-  {
-    id: "5",
-    name: "Camera 05",
-    location: "Reception Area",
-    status: "online",
-    lastActivity: "Live",
-    aiSuggestion: "Person loitering detected – want to zoom in?",
-    priority: 8,
-    isRecording: true,
-    hasAudio: true,
-    resolution: "4K",
-  },
-  {
-    id: "6",
-    name: "Camera 06",
-    location: "Corridor B",
-    status: "alert",
-    lastActivity: "Alert 2m ago",
-    aiSuggestion: "⚠️ Unusual activity – auto-switched to priority view",
-    priority: 9,
-    isRecording: true,
-    hasAudio: false,
-    resolution: "1080p",
-  },
-  {
-    id: "7",
-    name: "Camera 07",
-    location: "Cafeteria",
-    status: "online",
-    lastActivity: "Live",
-    priority: 5,
-    isRecording: true,
-    hasAudio: true,
-    resolution: "720p",
-  },
-  {
-    id: "8",
-    name: "Camera 08",
-    location: "Server Room",
-    status: "online",
-    lastActivity: "Live",
-    priority: 6,
-    isRecording: true,
-    hasAudio: false,
-    resolution: "1080p",
-  },
-  {
-    id: "9",
-    name: "Camera 09",
-    location: "Rooftop",
-    status: "online",
-    lastActivity: "Live",
-    aiSuggestion: "High traffic area – recommended for monitoring",
-    priority: 4,
-    isRecording: true,
-    hasAudio: false,
-    resolution: "4K",
-  },
-]
-
 const AI_NOTIFICATIONS: AINotification[] = [
   {
     id: "1",
@@ -430,16 +309,19 @@ export function LiveFeedWall() {
   useEffect(() => {
     if (!hasLoadedPersistedState) return
     window.localStorage.setItem(CUSTOM_FEEDS_STORAGE_KEY, JSON.stringify(customFeeds))
+    emitCameraFeedsSync()
   }, [customFeeds, hasLoadedPersistedState])
 
   useEffect(() => {
     if (!hasLoadedPersistedState) return
     window.localStorage.setItem(FEED_DEVICE_MAP_STORAGE_KEY, JSON.stringify(feedDeviceMap))
+    emitCameraFeedsSync()
   }, [feedDeviceMap, hasLoadedPersistedState])
 
   useEffect(() => {
     if (!hasLoadedPersistedState) return
     window.localStorage.setItem(DELETED_FEEDS_STORAGE_KEY, JSON.stringify(deletedFeedIds))
+    emitCameraFeedsSync()
   }, [deletedFeedIds, hasLoadedPersistedState])
 
   // ── Grid / UI state ──
@@ -449,7 +331,7 @@ export function LiveFeedWall() {
   const [searchQuery, setSearchQuery] = useState("")
   const [autoArrange, setAutoArrange] = useState(true)
   const [showAISuggestions, setShowAISuggestions] = useState(true)
-  const allFeeds = [...MOCK_FEEDS, ...customFeeds]
+  const allFeeds = [...DEFAULT_CAMERA_FEEDS, ...customFeeds]
   const visibleFeeds = allFeeds.filter((feed) => !deletedFeedIds.includes(feed.id))
 
   // ── Playback state (fullscreen modal) ──
@@ -555,7 +437,7 @@ export function LiveFeedWall() {
     )
     if (!confirmed) return
 
-    const isDefaultFeed = MOCK_FEEDS.some((feed) => feed.id === feedId)
+    const isDefaultFeed = DEFAULT_CAMERA_FEEDS.some((feed) => feed.id === feedId)
     if (isDefaultFeed) {
       setDeletedFeedIds((prev) => (prev.includes(feedId) ? prev : [...prev, feedId]))
     } else {
@@ -666,6 +548,7 @@ export function LiveFeedWall() {
         resolution: cameraResolutionInput,
         sourceType: "webcam",
         deviceId: selectedWebcamDeviceId,
+        coverageArea: { unit: "zone", label: trimmedLocation },
       }
       setCustomFeeds((prev) => [...prev, newFeed])
       assignDevice(id, selectedWebcamDeviceId)
@@ -688,6 +571,7 @@ export function LiveFeedWall() {
         sourceType: "cctv",
         cctvStreamType,
         cctvStreamUrl: cctvStreamUrl.trim(),
+        coverageArea: { unit: "zone", label: trimmedLocation },
       }
       setCustomFeeds((prev) => [...prev, newFeed])
     }
