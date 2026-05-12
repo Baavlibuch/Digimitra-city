@@ -63,7 +63,9 @@ class MinIOStorageService:
                           timestamp: datetime,
                           metadata: Dict[str, Any] = None,
                           file_extension: str = ".mp4",
-                          content_type: str = "video/mp4") -> Optional[str]:
+                          content_type: str = "video/mp4",
+                          segment_index: Optional[int] = None,
+                          recording_session_id: Optional[str] = None) -> Optional[str]:
         """Upload video chunk to MinIO (MP4 from edge pipeline or WebM/other from browser MediaRecorder)."""
         
         if not self.client:
@@ -71,12 +73,17 @@ class MinIOStorageService:
             return None
         
         try:
-            # Generate object key
+            # Generate object key (DVR-friendly: date hierarchy + optional session + segment index for ordering)
             timestamp_str = timestamp.strftime("%Y/%m/%d/%H")
             chunk_timestamp = timestamp.strftime("%Y%m%d_%H%M%S")
             ext = file_extension if file_extension.startswith(".") else f".{file_extension}"
             unique = uuid.uuid4().hex[:12]
-            object_key = f"video-chunks/{camera_id}/{timestamp_str}/{chunk_timestamp}_{unique}{ext}"
+            session_part = ""
+            if recording_session_id:
+                sid = str(recording_session_id).replace("-", "")[:12]
+                session_part = f"sess_{sid}_"
+            seg_part = f"seg_{segment_index:06d}_" if segment_index is not None else ""
+            object_key = f"video-chunks/{camera_id}/{timestamp_str}/{session_part}{seg_part}{chunk_timestamp}_{unique}{ext}"
             
             # Prepare metadata (S3/MinIO user metadata values must be strings)
             extra = metadata or {}

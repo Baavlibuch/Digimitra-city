@@ -147,6 +147,9 @@ async def upload_browser_recording(
     segment_started_at: str = Form(...),
     mime_type: str = Form("video/webm"),
     camera_name: Optional[str] = Form(None),
+    segment_index: Optional[int] = Form(None),
+    segment_window_ms: Optional[int] = Form(None),
+    ingest_mode: Optional[str] = Form(None),
     current_user: User = Depends(auth.get_current_active_user),
 ):
     """
@@ -180,6 +183,9 @@ async def upload_browser_recording(
         "uploaded_by": current_user.username,
         "original_filename": file.filename or "",
         "source": "browser_mediarecorder",
+        "segment_index": segment_index if segment_index is not None else "",
+        "segment_window_ms": segment_window_ms if segment_window_ms is not None else "",
+        "ingest_mode": ingest_mode or "continuous_surveillance",
     }
 
     object_key = recording_storage.upload_video_chunk(
@@ -189,6 +195,8 @@ async def upload_browser_recording(
         metadata=meta,
         file_extension=ext,
         content_type=content_type,
+        segment_index=segment_index,
+        recording_session_id=recording_session_id,
     )
     if not object_key:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Upload to storage failed")

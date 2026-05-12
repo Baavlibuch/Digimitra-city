@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef, useCallback, type ReactNode } from "react"
+import { useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from "react"
 import { useAuth } from "@/components/auth-provider"
 import { useWebcamRecording } from "@/lib/use-webcam-recording"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -191,15 +191,8 @@ function CctvPreview({ streamUrl, muted = true }: { streamUrl?: string; muted?: 
   )
 }
 
-type WebcamHoverRecordingApi = {
-  isRecording: boolean
-  startRecording: () => void
-  stopRecording: () => void
-  canRecord: boolean
-}
-
 /**
- * Owns one getUserMedia stream, live preview, MediaRecorder upload session, and optional hover UI.
+ * Owns one getUserMedia stream, live preview, and automatic continuous MediaRecorder uploads while the stream is active.
  */
 function WebcamTileBody({
   feed,
@@ -212,20 +205,20 @@ function WebcamTileBody({
   deviceId?: string
   operatorUsername: string
   onRecordingChange: (feedId: string, active: boolean) => void
-  renderHover: (rec: WebcamHoverRecordingApi) => ReactNode
+  renderHover: () => ReactNode
 }) {
   const { stream } = useWebcamStream(deviceId)
-  const { isRecording, startRecording, stopRecording, uploadError, clearUploadError } = useWebcamRecording(
-    stream,
-    operatorUsername,
+  const recordingMeta = useMemo(
+    () => (deviceId ? { cameraId: feed.id, cameraName: feed.name } : null),
+    [deviceId, feed.id, feed.name],
   )
+  const { isRecording, uploadError, clearUploadError } = useWebcamRecording(stream, operatorUsername, {
+    meta: recordingMeta,
+  })
 
   useEffect(() => {
     onRecordingChange(feed.id, isRecording)
   }, [feed.id, isRecording, onRecordingChange])
-
-  const canRecord = Boolean(deviceId && stream)
-  const start = () => void startRecording({ cameraId: feed.id, cameraName: feed.name })
 
   return (
     <>
@@ -242,26 +235,19 @@ function WebcamTileBody({
           </button>
         </div>
       )}
-      {renderHover({
-        isRecording,
-        startRecording: start,
-        stopRecording,
-        canRecord,
-      })}
+      {renderHover()}
     </>
   )
 }
 
 function TileHoverChrome({
   feed,
-  recording,
   onFullscreen,
   onPlayPause,
   isPlaying,
   onDelete,
 }: {
   feed: CameraFeed
-  recording?: WebcamHoverRecordingApi | null
   onFullscreen: () => void
   onPlayPause: () => void
   isPlaying: boolean
@@ -278,22 +264,6 @@ function TileHoverChrome({
       <Button size="icon" variant="secondary" className="w-8 h-8">
         {feed.hasAudio ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
       </Button>
-      {recording && (
-        <Button
-          size="sm"
-          variant={recording.isRecording ? "destructive" : "secondary"}
-          className="h-8 px-2 text-xs shrink-0"
-          disabled={!recording.isRecording && !recording.canRecord}
-          onClick={() => (recording.isRecording ? recording.stopRecording() : recording.startRecording())}
-          title={
-            recording.canRecord || recording.isRecording
-              ? "Upload time-sliced segments to surveillance storage (MediaRecorder)"
-              : "Assign a webcam device first"
-          }
-        >
-          {recording.isRecording ? "Stop" : "Record"}
-        </Button>
-      )}
       <Button size="icon" variant="destructive" className="w-8 h-8" onClick={onDelete}>
         <Trash2 className="w-4 h-4" />
       </Button>
@@ -844,7 +814,6 @@ export function LiveFeedWall() {
                     <CctvPreview streamUrl={feed.cctvStreamUrl} />
                     <TileHoverChrome
                       feed={feed}
-                      recording={null}
                       onFullscreen={() => handleViewCamera(feed.id)}
                       onPlayPause={handlePlayPause}
                       isPlaying={isPlaying}
@@ -857,10 +826,9 @@ export function LiveFeedWall() {
                     deviceId={feedDeviceMap[feed.id]}
                     operatorUsername={recordingOperatorId}
                     onRecordingChange={handleRecordingChange}
-                    renderHover={(rec) => (
+                    renderHover={() => (
                       <TileHoverChrome
                         feed={feed}
-                        recording={rec}
                         onFullscreen={() => handleViewCamera(feed.id)}
                         onPlayPause={handlePlayPause}
                         isPlaying={isPlaying}

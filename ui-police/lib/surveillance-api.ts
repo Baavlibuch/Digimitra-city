@@ -33,6 +33,12 @@ export type UploadRecordingBlobParams = {
   recordingSessionId: string
   segmentStartedAt: string
   mimeType: string
+  /** Monotonic index within `recordingSessionId` for timeline ordering. */
+  segmentIndex?: number
+  /** MediaRecorder timeslice / nominal rolling window in ms. */
+  segmentWindowMs?: number
+  /** e.g. continuous_surveillance — stored on object for future indexing. */
+  ingestMode?: string
 }
 
 export async function uploadRecordingBlob(params: UploadRecordingBlobParams): Promise<void> {
@@ -45,6 +51,9 @@ export async function uploadRecordingBlob(params: UploadRecordingBlobParams): Pr
   fd.append("segment_started_at", params.segmentStartedAt)
   fd.append("mime_type", params.mimeType)
   fd.append("camera_name", params.cameraName)
+  if (params.segmentIndex !== undefined) fd.append("segment_index", String(params.segmentIndex))
+  if (params.segmentWindowMs !== undefined) fd.append("segment_window_ms", String(params.segmentWindowMs))
+  if (params.ingestMode) fd.append("ingest_mode", params.ingestMode)
 
   const res = await fetch(`${base}/api/v1/recordings/upload`, {
     method: "POST",
