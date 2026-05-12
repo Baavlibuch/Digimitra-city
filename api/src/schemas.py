@@ -2,6 +2,15 @@ from pydantic import BaseModel
 from typing import Optional, Literal
 from datetime import datetime
 
+
+class RecordingUploadResponse(BaseModel):
+    object_key: str
+    camera_id: str
+    recording_session_id: str
+    bucket: str
+    segment_started_at: str
+    size_bytes: int
+
 # --- Token Schemas ---
 class Token(BaseModel):
     access_token: str

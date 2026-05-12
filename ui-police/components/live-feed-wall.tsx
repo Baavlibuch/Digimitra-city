@@ -1,6 +1,8 @@
 "use client"
 
-import { useState, useEffect, useRef, useCallback } from "react"
+import { useState, useEffect, useRef, useCallback, type ReactNode } from "react"
+import { useAuth } from "@/components/auth-provider"
+import { useWebcamRecording } from "@/lib/use-webcam-recording"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -189,6 +191,116 @@ function CctvPreview({ streamUrl, muted = true }: { streamUrl?: string; muted?: 
   )
 }
 
+type WebcamHoverRecordingApi = {
+  isRecording: boolean
+  startRecording: () => void
+  stopRecording: () => void
+  canRecord: boolean
+}
+
+/**
+ * Owns one getUserMedia stream, live preview, MediaRecorder upload session, and optional hover UI.
+ */
+function WebcamTileBody({
+  feed,
+  deviceId,
+  operatorUsername,
+  onRecordingChange,
+  renderHover,
+}: {
+  feed: CameraFeed
+  deviceId?: string
+  operatorUsername: string
+  onRecordingChange: (feedId: string, active: boolean) => void
+  renderHover: (rec: WebcamHoverRecordingApi) => ReactNode
+}) {
+  const { stream } = useWebcamStream(deviceId)
+  const { isRecording, startRecording, stopRecording, uploadError, clearUploadError } = useWebcamRecording(
+    stream,
+    operatorUsername,
+  )
+
+  useEffect(() => {
+    onRecordingChange(feed.id, isRecording)
+  }, [feed.id, isRecording, onRecordingChange])
+
+  const canRecord = Boolean(deviceId && stream)
+  const start = () => void startRecording({ cameraId: feed.id, cameraName: feed.name })
+
+  return (
+    <>
+      <WebcamPreview stream={stream} muted />
+      {uploadError && (
+        <div className="absolute bottom-11 left-2 right-2 z-30 rounded-md bg-red-950/95 px-2 py-1.5 text-[10px] leading-snug text-red-50 shadow-lg">
+          <span>{uploadError}</span>
+          <button
+            type="button"
+            className="ml-2 underline font-medium"
+            onClick={() => clearUploadError()}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+      {renderHover({
+        isRecording,
+        startRecording: start,
+        stopRecording,
+        canRecord,
+      })}
+    </>
+  )
+}
+
+function TileHoverChrome({
+  feed,
+  recording,
+  onFullscreen,
+  onPlayPause,
+  isPlaying,
+  onDelete,
+}: {
+  feed: CameraFeed
+  recording?: WebcamHoverRecordingApi | null
+  onFullscreen: () => void
+  onPlayPause: () => void
+  isPlaying: boolean
+  onDelete: () => void
+}) {
+  return (
+    <div className="absolute inset-0 z-20 bg-black/50 opacity-0 hover:opacity-100 transition-opacity flex items-center justify-center gap-2 flex-wrap">
+      <Button size="icon" variant="secondary" className="w-8 h-8" onClick={onFullscreen}>
+        <Maximize2 className="w-4 h-4" />
+      </Button>
+      <Button size="icon" variant="secondary" className="w-8 h-8" onClick={onPlayPause}>
+        {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+      </Button>
+      <Button size="icon" variant="secondary" className="w-8 h-8">
+        {feed.hasAudio ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+      </Button>
+      {recording && (
+        <Button
+          size="sm"
+          variant={recording.isRecording ? "destructive" : "secondary"}
+          className="h-8 px-2 text-xs shrink-0"
+          disabled={!recording.isRecording && !recording.canRecord}
+          onClick={() => (recording.isRecording ? recording.stopRecording() : recording.startRecording())}
+          title={
+            recording.canRecord || recording.isRecording
+              ? "Upload time-sliced segments to surveillance storage (MediaRecorder)"
+              : "Assign a webcam device first"
+          }
+        >
+          {recording.isRecording ? "Stop" : "Record"}
+        </Button>
+      )}
+      <Button size="icon" variant="destructive" className="w-8 h-8" onClick={onDelete}>
+        <Trash2 className="w-4 h-4" />
+      </Button>
+    </div>
+  )
+}
+
 function CameraClosedView({ name, location }: { name: string; location: string }) {
   return (
     <div className="absolute inset-0 flex items-center justify-center bg-black">
@@ -233,6 +345,17 @@ const AI_NOTIFICATIONS: AINotification[] = [
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export function LiveFeedWall() {
+  const { user } = useAuth()
+  const recordingOperatorId = (user?.email ?? user?.username ?? "").trim()
+
+  const [activeRecordingByFeed, setActiveRecordingByFeed] = useState<Record<string, boolean>>({})
+  const handleRecordingChange = useCallback((feedId: string, active: boolean) => {
+    setActiveRecordingByFeed((prev) => {
+      if (Boolean(prev[feedId]) === active) return prev
+      return { ...prev, [feedId]: active }
+    })
+  }, [])
+
   // ── Device / stream state ──
   const { devices, refresh: refreshDevices } = useDeviceList()
 
@@ -589,17 +712,6 @@ export function LiveFeedWall() {
     }
   }
 
-  // ── Per-grid-cell stream (only rendered for feeds that have a deviceId) ──
-  // We use a child component so each feed gets its own hook instance.
-  function GridCellStream({ feed }: { feed: CameraFeed }) {
-    if (feed.sourceType === "cctv") {
-      return <CctvPreview streamUrl={feed.cctvStreamUrl} />
-    }
-    const deviceId = feedDeviceMap[feed.id]
-    const { stream } = useWebcamStream(deviceId)
-    return <WebcamPreview stream={stream} muted />
-  }
-
   return (
     <div className="space-y-6">
       {/* ── Header ── */}
@@ -727,8 +839,36 @@ export function LiveFeedWall() {
             <CardContent className="p-0">
               {/* Video area */}
               <div className="relative aspect-video bg-black rounded-t-lg overflow-hidden">
-                {/* Real webcam stream (if assigned) */}
-                <GridCellStream feed={feed} />
+                {feed.sourceType === "cctv" ? (
+                  <>
+                    <CctvPreview streamUrl={feed.cctvStreamUrl} />
+                    <TileHoverChrome
+                      feed={feed}
+                      recording={null}
+                      onFullscreen={() => handleViewCamera(feed.id)}
+                      onPlayPause={handlePlayPause}
+                      isPlaying={isPlaying}
+                      onDelete={() => handleDeleteCamera(feed.id)}
+                    />
+                  </>
+                ) : (
+                  <WebcamTileBody
+                    feed={feed}
+                    deviceId={feedDeviceMap[feed.id]}
+                    operatorUsername={recordingOperatorId}
+                    onRecordingChange={handleRecordingChange}
+                    renderHover={(rec) => (
+                      <TileHoverChrome
+                        feed={feed}
+                        recording={rec}
+                        onFullscreen={() => handleViewCamera(feed.id)}
+                        onPlayPause={handlePlayPause}
+                        isPlaying={isPlaying}
+                        onDelete={() => handleDeleteCamera(feed.id)}
+                      />
+                    )}
+                  />
+                )}
 
                 {/* Camera-off view */}
                 {feed.status === "offline" && (
@@ -755,8 +895,9 @@ export function LiveFeedWall() {
                   <div className={`w-3 h-3 rounded-full ${getStatusColor(feed.status)}`} />
                 </div>
 
-                {/* REC badge */}
-                {feed.isRecording && (
+                {/* REC badge: browser upload session for webcams; mock flag for CCTV tiles */}
+                {((feed.sourceType === "cctv" && feed.isRecording) ||
+                  (feed.sourceType !== "cctv" && activeRecordingByFeed[feed.id])) && (
                   <div className="absolute top-2 right-2 z-10 flex items-center gap-1">
                     <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
                     <span className="text-white text-xs">REC</span>
@@ -771,32 +912,6 @@ export function LiveFeedWall() {
                     </div>
                   </div>
                 )}
-
-                {/* Hover controls */}
-                <div className="absolute inset-0 z-20 bg-black/50 opacity-0 hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-                  <Button
-                    size="icon"
-                    variant="secondary"
-                    className="w-8 h-8"
-                    onClick={() => handleViewCamera(feed.id)}
-                  >
-                    <Maximize2 className="w-4 h-4" />
-                  </Button>
-                  <Button size="icon" variant="secondary" className="w-8 h-8" onClick={handlePlayPause}>
-                    {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-                  </Button>
-                  <Button size="icon" variant="secondary" className="w-8 h-8">
-                    {feed.hasAudio ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
-                  </Button>
-                  <Button
-                    size="icon"
-                    variant="destructive"
-                    className="w-8 h-8"
-                    onClick={() => handleDeleteCamera(feed.id)}
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
-                </div>
               </div>
 
               {/* Feed metadata */}

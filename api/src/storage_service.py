@@ -4,6 +4,7 @@ OOP-oriented storage management
 """
 import os
 import io
+import uuid
 from typing import Optional, Dict, Any
 from datetime import datetime, timedelta
 from minio import Minio
@@ -60,8 +61,10 @@ class MinIOStorageService:
                           camera_id: str,
                           chunk_data: bytes,
                           timestamp: datetime,
-                          metadata: Dict[str, Any] = None) -> Optional[str]:
-        """Upload video chunk to MinIO"""
+                          metadata: Dict[str, Any] = None,
+                          file_extension: str = ".mp4",
+                          content_type: str = "video/mp4") -> Optional[str]:
+        """Upload video chunk to MinIO (MP4 from edge pipeline or WebM/other from browser MediaRecorder)."""
         
         if not self.client:
             self.logger.error("MinIO client not initialized")
@@ -71,14 +74,17 @@ class MinIOStorageService:
             # Generate object key
             timestamp_str = timestamp.strftime("%Y/%m/%d/%H")
             chunk_timestamp = timestamp.strftime("%Y%m%d_%H%M%S")
-            object_key = f"video-chunks/{camera_id}/{timestamp_str}/{chunk_timestamp}.mp4"
+            ext = file_extension if file_extension.startswith(".") else f".{file_extension}"
+            unique = uuid.uuid4().hex[:12]
+            object_key = f"video-chunks/{camera_id}/{timestamp_str}/{chunk_timestamp}_{unique}{ext}"
             
-            # Prepare metadata
+            # Prepare metadata (S3/MinIO user metadata values must be strings)
+            extra = metadata or {}
             chunk_metadata = {
-                "camera_id": camera_id,
+                "camera_id": str(camera_id),
                 "timestamp": timestamp.isoformat(),
-                "content_type": "video/mp4",
-                **(metadata or {})
+                "content_type": content_type,
+                **{k: str(v) for k, v in extra.items()},
             }
             
             # Upload chunk
@@ -87,7 +93,7 @@ class MinIOStorageService:
                 object_name=object_key,
                 data=io.BytesIO(chunk_data),
                 length=len(chunk_data),
-                content_type="video/mp4",
+                content_type=content_type,
                 metadata=chunk_metadata
             )
             

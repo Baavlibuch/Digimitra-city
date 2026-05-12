@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
-from typing import List
+from typing import List, Optional
 
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from . import services, database, auth, schemas
 from .ai_service import AIService
 from .schemas import AIRequest
+from .storage_service import MinIOStorageService
 
 from shared.models import User, Event
 from shared.models import Camera as CameraModel
@@ -25,6 +26,7 @@ app.add_middleware(
 )
 
 ai_service = AIService()
+recording_storage = MinIOStorageService()
 
 @app.on_event("startup")
 def startup_event():
@@ -135,6 +137,71 @@ def delete_camera(camera_id: str, db: Session = Depends(database.get_db)):
         raise HTTPException(status_code=404, detail="Camera not found")
     db.delete(db_camera)
     db.commit()
+
+
+@app.post("/api/v1/recordings/upload", response_model=schemas.RecordingUploadResponse)
+async def upload_browser_recording(
+    file: UploadFile = File(...),
+    camera_id: str = Form(...),
+    recording_session_id: str = Form(...),
+    segment_started_at: str = Form(...),
+    mime_type: str = Form("video/webm"),
+    camera_name: Optional[str] = Form(None),
+    current_user: User = Depends(auth.get_current_active_user),
+):
+    """
+    Accepts a segment produced by the browser MediaRecorder API and stores it via MinIOStorageService
+    (same path family as edge-agent chunks: video-chunks/{camera_id}/...).
+    """
+    if not recording_storage.client:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Object storage unavailable")
+
+    raw = await file.read()
+    if len(raw) == 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Empty upload body")
+
+    try:
+        ts = datetime.fromisoformat(segment_started_at.replace("Z", "+00:00"))
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="segment_started_at must be ISO-8601")
+
+    mt = (mime_type or "video/webm").lower()
+    if "webm" in mt:
+        ext, content_type = ".webm", "video/webm"
+    elif "mp4" in mt:
+        ext, content_type = ".mp4", "video/mp4"
+    else:
+        ext, content_type = ".bin", mime_type or "application/octet-stream"
+
+    meta = {
+        "recording_session_id": recording_session_id,
+        "segment_started_at": segment_started_at,
+        "camera_name": camera_name or "",
+        "uploaded_by": current_user.username,
+        "original_filename": file.filename or "",
+        "source": "browser_mediarecorder",
+    }
+
+    object_key = recording_storage.upload_video_chunk(
+        camera_id=camera_id,
+        chunk_data=raw,
+        timestamp=ts,
+        metadata=meta,
+        file_extension=ext,
+        content_type=content_type,
+    )
+    if not object_key:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Upload to storage failed")
+
+    return schemas.RecordingUploadResponse(
+        object_key=object_key,
+        camera_id=camera_id,
+        recording_session_id=recording_session_id,
+        bucket=recording_storage.bucket_name,
+        segment_started_at=segment_started_at,
+        size_bytes=len(raw),
+    )
+
 
 # --- Event & Search Endpoints ---
 @app.get("/api/v1/events")
