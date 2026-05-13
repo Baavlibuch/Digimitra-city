@@ -150,36 +150,43 @@ class MinIOStorageService:
             self.logger.error(f"Error uploading thumbnail: {e}")
             return None
     
-    def get_presigned_url(self, 
-                         object_key: str,
-                         expiry_hours: int = 24) -> Optional[str]:
-        """Get presigned URL for object access"""
-        
+    def get_presigned_url(
+        self,
+        object_key: str,
+        expiry_hours: int = 24,
+        bucket_name: Optional[str] = None,
+    ) -> Optional[str]:
+        """Get presigned URL for object access (optionally override bucket for multi-bucket DVR rows)."""
+
         if not self.client:
             return None
-        
+
+        bucket = bucket_name or self.bucket_name
+
         try:
             url = self.client.presigned_get_object(
-                bucket_name=self.bucket_name,
+                bucket_name=bucket,
                 object_name=object_key,
-                expires=timedelta(hours=expiry_hours)
+                expires=timedelta(hours=expiry_hours),
             )
-            
+
             return url
-            
+
         except Exception as e:
             self.logger.error(f"Error generating presigned URL: {e}")
             return None
     
-    def delete_object(self, object_key: str) -> bool:
-        """Delete object from MinIO"""
-        
+    def delete_object(self, object_key: str, bucket_name: Optional[str] = None) -> bool:
+        """Delete object from MinIO (optional bucket for DVR rows not in the default bucket)."""
+
         if not self.client:
             return False
-        
+
+        bucket = bucket_name or self.bucket_name
+
         try:
             self.client.remove_object(
-                bucket_name=self.bucket_name,
+                bucket_name=bucket,
                 object_name=object_key
             )
             

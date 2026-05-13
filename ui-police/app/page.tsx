@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect } from "react"
+import { Suspense, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { Dashboard } from "@/components/dashboard"
 import { ThemeProvider } from "@/components/theme-provider"
@@ -21,11 +21,13 @@ export default function Home() {
       {isCheckingAuth ? (
         <div className="min-h-screen bg-background" aria-busy="true" />
       ) : (
-      <Dashboard
-        onSignOut={() => {
-          void logout()
-        }}
-      />
+        <Suspense fallback={<div className="min-h-screen bg-background" aria-busy="true" />}>
+          <Dashboard
+            onSignOut={() => {
+              void logout()
+            }}
+          />
+        </Suspense>
       )}
     </ThemeProvider>
   )

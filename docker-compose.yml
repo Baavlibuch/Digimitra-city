@@ -107,7 +107,10 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg2://svc:svcpass@postgres:5432/eventsdb
       REDPANDA_BOOTSTRAP: redpanda:9092
-      PYTHONPATH: /app
+      EVENTS_TOPIC: region-1-events
+      CHUNKS_TOPIC: region-1-chunks
+      CHUNKS_MINIO_BUCKET: mvp-bucket
+      PYTHONPATH: /app:/app/stream-processor/src
       <<: *default-env
 
   nginx-hls:

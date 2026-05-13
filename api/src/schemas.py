@@ -1,15 +1,49 @@
-from pydantic import BaseModel
-from typing import Optional, Literal
+from pydantic import BaseModel, ConfigDict
+from typing import Optional, Literal, List, Any, Dict
 from datetime import datetime
 
 
 class RecordingUploadResponse(BaseModel):
+    recording_id: Optional[str] = None
     object_key: str
     camera_id: str
     recording_session_id: str
     bucket: str
     segment_started_at: str
     size_bytes: int
+
+
+class RecordingSegmentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    camera_id: str
+    recording_session_id: str
+    bucket_name: str
+    object_key: str
+    start_time: datetime
+    end_time: Optional[datetime] = None
+    duration_seconds: Optional[float] = None
+    file_type: str
+    size_bytes: Optional[int] = None
+    ingest_source: str
+    created_at: datetime
+    extra: Optional[Dict[str, Any]] = None
+
+
+class RecordingListResponse(BaseModel):
+    items: List[RecordingSegmentOut]
+    total: int
+    limit: int
+    offset: int
+
+
+class RecordingPlaybackResponse(BaseModel):
+    recording_id: str
+    url: str
+    bucket_name: str
+    object_key: str
+    expires_in_seconds: int
 
 # --- Token Schemas ---
 class Token(BaseModel):

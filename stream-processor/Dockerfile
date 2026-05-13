@@ -10,4 +10,6 @@ RUN pip install --no-cache-dir -r /app/stream-processor/requirements.txt
 
 WORKDIR /app/stream-processor
 
+ENV PYTHONPATH=/app:/app/stream-processor/src
+
 CMD ["python", "src/main.py"]

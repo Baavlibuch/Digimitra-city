@@ -1,6 +1,7 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -10,9 +11,10 @@ import { MapView } from "@/components/map-view"
 import { TextSearch } from "@/components/text-search"
 import { EventsAlerts } from "@/components/events-alerts"
 import { LiveFeedWall } from "@/components/live-feed-wall"
+import { RecordingsHistory } from "@/components/recordings-history"
 import { LoadingScreen } from "@/components/loading-screen"
 import { Settings } from "@/components/settings"
-import { Camera, AlertTriangle, Activity, MapPin, Search, Calendar, Mic } from "lucide-react"
+import { Camera, AlertTriangle, Activity, MapPin, Search, Calendar, Mic, Clapperboard } from "lucide-react"
 import {
   CAMERA_FEEDS_SYNC_EVENT,
   buildVisibleFeeds,
@@ -22,11 +24,23 @@ import {
   readPersistedCameraState,
 } from "@/lib/camera-feeds"
 
+const NAV_SECTION_IDS = new Set([
+  "dashboard",
+  "map",
+  "search",
+  "events",
+  "recordings",
+  "feeds",
+  "settings",
+])
+
 interface DashboardProps {
   onSignOut: () => void
 }
 
 export function Dashboard({ onSignOut }: DashboardProps) {
+  const router = useRouter()
+  const searchParams = useSearchParams()
   const [activeSection, setActiveSection] = useState("dashboard")
   const [isLoading, setIsLoading] = useState(true)
   const [isSigningOut, setIsSigningOut] = useState(false)
@@ -35,6 +49,17 @@ export function Dashboard({ onSignOut }: DashboardProps) {
   const [coverageAreaValue, setCoverageAreaValue] = useState("0")
   const [eventCount, setEventCount] = useState(0)
   const [recentEvents, setRecentEvents] = useState<Array<{ id: string; type: string; camera: string; time: string }>>([])
+
+  useEffect(() => {
+    const section = searchParams.get("section")
+    if (section === "recordings") {
+      router.replace("/recordings")
+      return
+    }
+    if (section && NAV_SECTION_IDS.has(section)) {
+      setActiveSection(section)
+    }
+  }, [searchParams, router])
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -116,6 +141,22 @@ export function Dashboard({ onSignOut }: DashboardProps) {
     }
   }
 
+  const handleNavSection = useCallback(
+    (id: string) => {
+      if (id === "recordings") {
+        router.push("/recordings")
+        return
+      }
+      setActiveSection(id)
+      if (id === "dashboard") {
+        router.replace("/")
+        return
+      }
+      router.replace(`/?section=${encodeURIComponent(id)}`)
+    },
+    [router],
+  )
+
   const renderSection = () => {
     switch (activeSection) {
       case "map":
@@ -124,6 +165,8 @@ export function Dashboard({ onSignOut }: DashboardProps) {
         return <TextSearch />
       case "events":
         return <EventsAlerts />
+      case "recordings":
+        return <RecordingsHistory />
       case "feeds":
         return <LiveFeedWall />
       case "settings":
@@ -147,8 +190,16 @@ export function Dashboard({ onSignOut }: DashboardProps) {
                   <div className="flex flex-wrap gap-3">
                     <Button
                       variant="outline"
+                      className="border-cyan-500/30 hover:bg-cyan-500/10 bg-transparent"
+                      onClick={() => handleNavSection("recordings")}
+                    >
+                      <Clapperboard className="w-4 h-4 mr-2" />
+                      Recording history
+                    </Button>
+                    <Button
+                      variant="outline"
                       className="border-green-500/30 hover:bg-green-500/10 bg-transparent"
-                      onClick={() => setActiveSection("search")}
+                      onClick={() => handleNavSection("search")}
                     >
                       <Mic className="w-4 h-4 mr-2" />
                       Voice Command
@@ -156,7 +207,7 @@ export function Dashboard({ onSignOut }: DashboardProps) {
                     <Button
                       variant="outline"
                       className="border-blue-500/30 hover:bg-blue-500/10 bg-transparent"
-                      onClick={() => setActiveSection("map")}
+                      onClick={() => handleNavSection("map")}
                     >
                       <MapPin className="w-4 h-4 mr-2" />
                       Show Map
@@ -164,7 +215,7 @@ export function Dashboard({ onSignOut }: DashboardProps) {
                     <Button
                       variant="outline"
                       className="border-blue-500/30 hover:bg-blue-500/10 bg-transparent"
-                      onClick={() => setActiveSection("events")}
+                      onClick={() => handleNavSection("events")}
                     >
                       <Calendar className="w-4 h-4 mr-2" />
                       Open Events
@@ -172,7 +223,7 @@ export function Dashboard({ onSignOut }: DashboardProps) {
                     <Button
                       variant="outline"
                       className="border-blue-500/30 hover:bg-blue-500/10 bg-transparent"
-                      onClick={() => setActiveSection("search")}
+                      onClick={() => handleNavSection("search")}
                     >
                       <Search className="w-4 h-4 mr-2" />
                       AI Operator
@@ -247,7 +298,7 @@ export function Dashboard({ onSignOut }: DashboardProps) {
     <div className="min-h-screen bg-background">
       <Navigation
         activeSection={activeSection}
-        onSectionChange={setActiveSection}
+        onSectionChange={handleNavSection}
         onSignOut={() => void handleSignOut()}
         isSigningOut={isSigningOut}
       />

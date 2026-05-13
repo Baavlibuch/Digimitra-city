@@ -1,7 +1,7 @@
 "use client"
 
 import { Button } from "@/components/ui/button"
-import { LayoutDashboard, Map, AlertTriangle, Monitor, Settings, Brain, LogOut } from "lucide-react"
+import { LayoutDashboard, Map, AlertTriangle, Monitor, Settings, Brain, LogOut, Clapperboard } from "lucide-react"
 
 interface NavigationProps {
   activeSection: string
@@ -16,6 +16,7 @@ export function Navigation({ activeSection, onSectionChange, onSignOut, isSignin
     { id: "map", label: "Map View", icon: Map },
     { id: "search", label: "AI Operator", icon: Brain }, // Changed icon to Brain for thinking model
     { id: "events", label: "Events & Alerts", icon: AlertTriangle },
+    { id: "recordings", label: "Recordings", icon: Clapperboard },
     { id: "feeds", label: "Live Feeds", icon: Monitor },
     { id: "settings", label: "Settings", icon: Settings },
   ]

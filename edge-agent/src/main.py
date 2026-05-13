@@ -140,12 +140,19 @@ def process_camera_feed(camera_id: str, video_file: str):
         if frames_in_chunk > 0 and detected_in_chunk:
             try:
                 minio_client.fput_object("mvp-bucket", chunk_path, chunk_path)
+                file_size = None
+                try:
+                    file_size = os.path.getsize(chunk_path)
+                except OSError:
+                    pass
                 chunk_data = {
                     "chunk_id": str(uuid.uuid4()),
                     "camera_id": camera_id,
                     "start_time": chunk_start_time.isoformat(),
                     "end_time": datetime.now().isoformat(),
-                    "minio_key": chunk_path
+                    "minio_key": chunk_path,
+                    "bucket": "mvp-bucket",
+                    "file_size_bytes": file_size,
                 }
                 redpanda_producer.send(CHUNKS_TOPIC, chunk_data)
                 logger.info(f"[{camera_id}] Uploaded chunk: {chunk_path}")

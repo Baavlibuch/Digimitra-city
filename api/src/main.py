@@ -1,12 +1,12 @@
 from datetime import datetime, timedelta
 from typing import List, Optional
 
-from fastapi import FastAPI, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import FastAPI, Depends, File, Form, HTTPException, Query, UploadFile, status, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
-from . import services, database, auth, schemas
+from . import services, database, auth, schemas, recording_service
 from .ai_service import AIService
 from .schemas import AIRequest
 from .storage_service import MinIOStorageService
@@ -150,6 +150,7 @@ async def upload_browser_recording(
     segment_index: Optional[int] = Form(None),
     segment_window_ms: Optional[int] = Form(None),
     ingest_mode: Optional[str] = Form(None),
+    db: Session = Depends(database.get_db),
     current_user: User = Depends(auth.get_current_active_user),
 ):
     """
@@ -201,7 +202,37 @@ async def upload_browser_recording(
     if not object_key:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Upload to storage failed")
 
+    end_ts: Optional[datetime] = None
+    duration_sec: Optional[float] = None
+    if segment_window_ms is not None and segment_window_ms > 0:
+        end_ts = ts + timedelta(milliseconds=segment_window_ms)
+        duration_sec = segment_window_ms / 1000.0
+
+    extra: dict = {
+        "segment_index": segment_index,
+        "segment_window_ms": segment_window_ms,
+        "ingest_mode": ingest_mode or "continuous_surveillance",
+        "camera_name": camera_name,
+        "original_filename": file.filename or "",
+    }
+
+    db_row = recording_service.register_segment(
+        db,
+        camera_id=camera_id,
+        recording_session_id=recording_session_id,
+        bucket_name=recording_storage.bucket_name,
+        object_key=object_key,
+        start_time=ts,
+        end_time=end_ts,
+        duration_seconds=duration_sec,
+        file_type=content_type,
+        size_bytes=len(raw),
+        ingest_source="browser_mediarecorder",
+        extra=extra,
+    )
+
     return schemas.RecordingUploadResponse(
+        recording_id=db_row.id if db_row else None,
         object_key=object_key,
         camera_id=camera_id,
         recording_session_id=recording_session_id,
@@ -209,6 +240,132 @@ async def upload_browser_recording(
         segment_started_at=segment_started_at,
         size_bytes=len(raw),
     )
+
+
+@app.get("/api/v1/recordings", response_model=schemas.RecordingListResponse)
+def list_recordings(
+    camera_id: Optional[str] = None,
+    start: Optional[datetime] = None,
+    end: Optional[datetime] = None,
+    ingest_source: Optional[str] = None,
+    recording_session_id: Optional[str] = None,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(database.get_db),
+    current_user: User = Depends(auth.get_current_active_user),
+):
+    items = recording_service.list_segments(
+        db,
+        camera_id=camera_id,
+        range_start=start,
+        range_end=end,
+        ingest_source=ingest_source,
+        recording_session_id=recording_session_id,
+        limit=limit,
+        offset=offset,
+    )
+    total = recording_service.count_segments(
+        db,
+        camera_id=camera_id,
+        range_start=start,
+        range_end=end,
+        ingest_source=ingest_source,
+        recording_session_id=recording_session_id,
+    )
+    return schemas.RecordingListResponse(items=items, total=total, limit=limit, offset=offset)
+
+
+@app.get("/api/v1/cameras/{camera_id}/recordings", response_model=schemas.RecordingListResponse)
+def list_recordings_for_camera(
+    camera_id: str,
+    start: Optional[datetime] = None,
+    end: Optional[datetime] = None,
+    ingest_source: Optional[str] = None,
+    recording_session_id: Optional[str] = None,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(database.get_db),
+    current_user: User = Depends(auth.get_current_active_user),
+):
+    items = recording_service.list_segments(
+        db,
+        camera_id=camera_id,
+        range_start=start,
+        range_end=end,
+        ingest_source=ingest_source,
+        recording_session_id=recording_session_id,
+        limit=limit,
+        offset=offset,
+    )
+    total = recording_service.count_segments(
+        db,
+        camera_id=camera_id,
+        range_start=start,
+        range_end=end,
+        ingest_source=ingest_source,
+        recording_session_id=recording_session_id,
+    )
+    return schemas.RecordingListResponse(items=items, total=total, limit=limit, offset=offset)
+
+
+@app.get("/api/v1/recordings/{recording_id}", response_model=schemas.RecordingSegmentOut)
+def get_recording(
+    recording_id: str,
+    db: Session = Depends(database.get_db),
+    current_user: User = Depends(auth.get_current_active_user),
+):
+    row = recording_service.get_segment_by_id(db, recording_id)
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Recording not found")
+    return row
+
+
+@app.get("/api/v1/recordings/{recording_id}/playback", response_model=schemas.RecordingPlaybackResponse)
+def get_recording_playback_url(
+    recording_id: str,
+    expiry_hours: int = Query(1, ge=1, le=72),
+    db: Session = Depends(database.get_db),
+    current_user: User = Depends(auth.get_current_active_user),
+):
+    row = recording_service.get_segment_by_id(db, recording_id)
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Recording not found")
+    url = recording_storage.get_presigned_url(
+        row.object_key,
+        expiry_hours=expiry_hours,
+        bucket_name=row.bucket_name,
+    )
+    if not url:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not generate playback URL for object storage",
+        )
+    return schemas.RecordingPlaybackResponse(
+        recording_id=row.id,
+        url=url,
+        bucket_name=row.bucket_name,
+        object_key=row.object_key,
+        expires_in_seconds=int(expiry_hours * 3600),
+    )
+
+
+@app.delete("/api/v1/recordings/{recording_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_recording(
+    recording_id: str,
+    db: Session = Depends(database.get_db),
+    current_user: User = Depends(auth.get_current_active_user),
+):
+    row = recording_service.get_segment_by_id(db, recording_id)
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Recording not found")
+    if not recording_storage.delete_object(row.object_key, bucket_name=row.bucket_name):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not delete object from storage",
+        )
+    db.delete(row)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # --- Event & Search Endpoints ---
