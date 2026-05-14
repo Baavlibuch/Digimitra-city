@@ -92,12 +92,39 @@ services:
       MINIO_SECRET_KEY: minioadmin
       MILVUS_HOST: milvus
       MILVUS_PORT: 19530
+      MILVUS_CONNECT_RETRIES: "18"
+      MILVUS_CONNECT_RETRY_SEC: "2"
       JWT_SECRET: devsecret
       ALLOW_ANY_LOGIN: "true"
       PYTHONPATH: /app
       <<: *default-env
     ports:
       - "8000:8000"
+
+  ai-processor:
+    build:
+      context: .
+      dockerfile: ./ai-processor/Dockerfile
+    depends_on: [postgres, minio, milvus]
+    environment:
+      DATABASE_URL: postgresql+psycopg2://svc:svcpass@postgres:5432/eventsdb
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MILVUS_HOST: milvus
+      MILVUS_PORT: "19530"
+      MILVUS_CONNECT_RETRIES: "18"
+      MILVUS_CONNECT_RETRY_SEC: "2"
+      CLIP_EMBEDDINGS_ENABLED: "true"
+      CLIP_EMBED_EVERY_N_FRAMES: "1"
+      AI_FRAME_INTERVAL_SEC: "3"
+      AI_IDLE_POLL_SEC: "10"
+      AI_DELAY_AFTER_SEGMENT_SEC: "2"
+      AI_PROCESSOR_PAUSED: "false"
+      YOLO_DEVICE: "cpu"
+      YOLO_IMGSZ: "416"
+      PYTHONPATH: /app
+      <<: *default-env
 
   stream-processor:
     build:

@@ -1,4 +1,5 @@
 import os
+import time
 import uuid
 import logging
 from typing import List, Optional
@@ -34,15 +35,50 @@ class SurveillanceServices:
         self.hls_base_url = f"http://{os.environ.get('MINIO_ENDPOINT')}/hls/"
 
     def _init_milvus_client(self):
-        try:
-            self.milvus_client = MilvusClient(
-                host=os.environ.get("MILVUS_HOST"),
-                port=int(os.environ.get("MILVUS_PORT"))
-            )
-        except Exception as e:
+        host = (os.environ.get("MILVUS_HOST") or "").strip()
+        if not host:
             self.milvus_client = None
-            self.vector_search_enabled = False
-            logger.warning(f"Milvus unavailable, vector search disabled: {e}")
+            logger.info("MILVUS_HOST not set; MilvusClient (legacy events index) disabled.")
+            return
+        try:
+            port = int(str(os.environ.get("MILVUS_PORT", "19530")).strip())
+        except ValueError:
+            port = 19530
+        try:
+            max_attempts = max(1, int(os.environ.get("MILVUS_CONNECT_RETRIES", "18")))
+        except ValueError:
+            max_attempts = 18
+        try:
+            sleep_s = float(os.environ.get("MILVUS_CONNECT_RETRY_SEC", "2.0"))
+        except ValueError:
+            sleep_s = 2.0
+        last_err: Optional[Exception] = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                client = MilvusClient(host=host, port=port)
+                try:
+                    client.list_collections()
+                except AttributeError:
+                    client.has_collection("events")
+                self.milvus_client = client
+                if attempt > 1:
+                    logger.info("MilvusClient connected after %s attempt(s).", attempt)
+                return
+            except Exception as e:
+                last_err = e
+                logger.warning(
+                    "MilvusClient connect attempt %s/%s failed for %s:%s: %s",
+                    attempt,
+                    max_attempts,
+                    host,
+                    port,
+                    e,
+                )
+                if attempt < max_attempts:
+                    time.sleep(sleep_s)
+        self.milvus_client = None
+        self.vector_search_enabled = False
+        logger.warning("MilvusClient unavailable after %s attempts: %s", max_attempts, last_err)
 
     def initialize_services(self):
         """

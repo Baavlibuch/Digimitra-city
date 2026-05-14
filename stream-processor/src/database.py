@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker, Session
 
 from shared.models import Base, Event, RecordingSegment
+from shared.schema_compat import ensure_recording_schema
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,7 @@ def create_tables() -> None:
     db_url = os.environ.get("DATABASE_URL")
     engine = create_engine(db_url)
     Base.metadata.create_all(bind=engine)
+    ensure_recording_schema(engine)
 
 
 def _parse_dt(value: Any) -> Optional[datetime]:

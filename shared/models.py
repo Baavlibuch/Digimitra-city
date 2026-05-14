@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Float, DateTime, ForeignKey, JSON, BigInteger, UniqueConstraint
+from sqlalchemy import Column, String, Float, DateTime, ForeignKey, JSON, BigInteger, Integer, Text, UniqueConstraint
 from sqlalchemy.orm import sessionmaker, relationship
 from sqlalchemy.ext.declarative import declarative_base
 import uuid
@@ -69,3 +69,28 @@ class RecordingSegment(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     # Future: detector labels, embedding ids, scene boundaries — keep JSON for loose coupling to Milvus / workers.
     extra = Column(JSON, nullable=True)
+    # Offline AI scan (ai-processor) — nullable only; core ingest/playback never depends on these.
+    ai_scan_started_at = Column(DateTime, nullable=True)
+    ai_scan_completed_at = Column(DateTime, nullable=True)
+    ai_scan_last_error = Column(Text, nullable=True)
+
+    detections = relationship("RecordingDetection", back_populates="segment", cascade="all, delete-orphan")
+
+
+class RecordingDetection(Base):
+    """
+    Object detection from stored recording segments (YOLO etc.).
+    `timestamp_offset_ms` is relative to segment media start (0 = first decodable frame).
+    """
+    __tablename__ = "recording_detections"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    recording_segment_id = Column(String, ForeignKey("recording_segments.id", ondelete="CASCADE"), nullable=False, index=True)
+    camera_id = Column(String, nullable=False, index=True)
+    object_type = Column(String, nullable=False, index=True)
+    confidence = Column(Float, nullable=False)
+    timestamp_offset_ms = Column(Integer, nullable=False)
+    bounding_box = Column(JSON, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    segment = relationship("RecordingSegment", back_populates="detections")

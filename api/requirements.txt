@@ -3,6 +3,8 @@ sqlalchemy
 psycopg2-binary
 minio
 pymilvus
+sentence-transformers>=2.2.0,<4
+torch>=2.0.0,<3
 passlib[bcrypt]
 python-jose
 python-multipart

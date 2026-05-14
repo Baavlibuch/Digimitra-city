@@ -97,6 +97,36 @@ export type RecordingPlaybackDto = {
   expires_in_seconds: number
 }
 
+export type DetectionDto = {
+  id: string
+  recording_segment_id: string
+  camera_id: string
+  object_type: string
+  confidence: number
+  timestamp_offset_ms: number
+  bounding_box: Record<string, unknown>
+  created_at: string
+  absolute_event_time: string
+}
+
+export type DetectionListDto = {
+  items: DetectionDto[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export type DetectionPlaybackDto = {
+  detection_id: string
+  recording_id: string
+  timestamp_offset_ms: number
+  absolute_event_time: string
+  url: string
+  bucket_name: string
+  object_key: string
+  expires_in_seconds: number
+}
+
 export type CameraDto = {
   id: string
   name: string
@@ -177,4 +207,112 @@ export async function deleteRecording(token: string, recordingId: string): Promi
     const text = await res.text()
     throw new Error(`Delete recording failed (${res.status}): ${text.slice(0, 200)}`)
   }
+}
+
+export async function fetchDetections(params: {
+  token: string
+  cameraId?: string
+  objectType?: string
+  recordingSegmentId?: string
+  eventAfter?: string
+  eventBefore?: string
+  limit?: number
+  offset?: number
+}): Promise<DetectionListDto> {
+  const base = defaultBase().replace(/\/$/, "")
+  const q = new URLSearchParams()
+  if (params.cameraId) q.set("camera_id", params.cameraId)
+  if (params.objectType) q.set("object_type", params.objectType)
+  if (params.recordingSegmentId) q.set("recording_segment_id", params.recordingSegmentId)
+  if (params.eventAfter) q.set("event_after", params.eventAfter)
+  if (params.eventBefore) q.set("event_before", params.eventBefore)
+  if (params.limit != null) q.set("limit", String(params.limit))
+  if (params.offset != null) q.set("offset", String(params.offset))
+  const qs = q.toString()
+  const res = await fetch(`${base}/api/v1/detections${qs ? `?${qs}` : ""}`, {
+    headers: authHeader(params.token),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`Detections list failed (${res.status}): ${text.slice(0, 200)}`)
+  }
+  return (await res.json()) as DetectionListDto
+}
+
+export type SemanticSearchHitDto = {
+  vector_id?: string | null
+  recording_segment_id: string
+  camera_id: string
+  timestamp_offset_ms: number
+  similarity: number
+  model_version?: string | null
+}
+
+export type SemanticSearchResponseDto = {
+  results: SemanticSearchHitDto[]
+  enabled: boolean
+  detail?: string | null
+}
+
+/** From GET /api/v1/semantic-search/status — backend is the source of truth for availability. */
+export type SemanticSearchStatusDto = {
+  configured: boolean
+  index_ready: boolean
+  detail?: string | null
+}
+
+export async function fetchSemanticSearchStatus(params: { token: string }): Promise<SemanticSearchStatusDto> {
+  const base = defaultBase().replace(/\/$/, "")
+  const res = await fetch(`${base}/api/v1/semantic-search/status`, {
+    headers: authHeader(params.token),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`Semantic search status failed (${res.status}): ${text.slice(0, 200)}`)
+  }
+  return (await res.json()) as SemanticSearchStatusDto
+}
+
+export async function fetchSemanticSearch(params: {
+  token: string
+  query: string
+  top_k?: number
+  cameraId?: string
+}): Promise<SemanticSearchResponseDto> {
+  const base = defaultBase().replace(/\/$/, "")
+  const res = await fetch(`${base}/api/v1/semantic-search`, {
+    method: "POST",
+    headers: {
+      ...authHeader(params.token),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      query: params.query.trim(),
+      top_k: params.top_k ?? 20,
+      camera_id: params.cameraId,
+    }),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`Semantic search failed (${res.status}): ${text.slice(0, 200)}`)
+  }
+  return (await res.json()) as SemanticSearchResponseDto
+}
+
+export async function fetchDetectionPlaybackUrl(
+  token: string,
+  detectionId: string,
+  expiryHours = 1,
+): Promise<DetectionPlaybackDto> {
+  const base = defaultBase().replace(/\/$/, "")
+  const q = new URLSearchParams()
+  q.set("expiry_hours", String(expiryHours))
+  const res = await fetch(`${base}/api/v1/detections/${encodeURIComponent(detectionId)}/playback?${q}`, {
+    headers: authHeader(token),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`Detection playback failed (${res.status}): ${text.slice(0, 200)}`)
+  }
+  return (await res.json()) as DetectionPlaybackDto
 }

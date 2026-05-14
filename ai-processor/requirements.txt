@@ -1,0 +1,20 @@
+# Ultralytics declares "opencv-python" on PyPI; pip would install GUI OpenCV alongside headless.
+# Install ultralytics with --no-deps in the Dockerfile after this file (see Dockerfile).
+# Local venv: pip install -r requirements.txt && pip install "ultralytics>=8.0.0,<9" --no-deps
+opencv-python-headless>=4.8.0,<5
+numpy>=1.23.0,<3
+matplotlib>=3.3.0,<4
+pillow>=7.1.2,<12
+pyyaml>=5.3.1,<7
+requests>=2.23.0
+scipy>=1.4.1,<2
+torch>=2.0.0,<3
+torchvision>=0.9.0,<1
+psutil>=5.8.0
+polars>=0.20.0,<3
+ultralytics-thop>=2.0.18
+minio>=7.2.0
+sqlalchemy>=1.4.0,<3
+psycopg2-binary>=2.9.0,<3
+pymilvus>=2.2.0,<2.4
+sentence-transformers>=2.2.0,<4

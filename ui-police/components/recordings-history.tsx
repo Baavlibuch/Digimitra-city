@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Play, RefreshCw, Video, HardDrive, Trash2 } from "lucide-react"
+import { Play, RefreshCw, Search, Video, HardDrive, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -21,8 +21,15 @@ import {
   fetchRecordingPlaybackUrl,
   fetchSurveillanceAccessToken,
   deleteRecording,
+  fetchDetections,
+  fetchDetectionPlaybackUrl,
+  fetchSemanticSearch,
+  fetchSemanticSearchStatus,
   type CameraDto,
   type RecordingSegmentDto,
+  type DetectionDto,
+  type SemanticSearchHitDto,
+  type SemanticSearchStatusDto,
 } from "@/lib/surveillance-api"
 
 function formatDt(iso: string | null | undefined) {
@@ -76,10 +83,12 @@ function combineLocalDateTimeToIso(dateStr: string, timeStr: string, edge: "star
 }
 
 export function RecordingsHistory() {
-  const { user } = useAuth()
+  const { user, isCheckingAuth } = useAuth()
   const operator = (user?.username || "operator").trim() || "operator"
 
   const [token, setToken] = useState<string | null>(null)
+  /** Same JWT as `token`, set synchronously when /api/v1/token returns so handlers work before React commits state. */
+  const surveillanceTokenRef = useRef<string | null>(null)
   const [cameras, setCameras] = useState<CameraDto[]>([])
   const [cameraFilter, setCameraFilter] = useState<string>("all")
   const [startDate, setStartDate] = useState("")
@@ -88,11 +97,22 @@ export function RecordingsHistory() {
   const [endTime, setEndTime] = useState("")
   const [rows, setRows] = useState<RecordingSegmentDto[]>([])
   const [total, setTotal] = useState(0)
+  const [detRows, setDetRows] = useState<DetectionDto[]>([])
+  const [detTotal, setDetTotal] = useState(0)
+  const [objectTypeFilter, setObjectTypeFilter] = useState<string>("all")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [playbackUrl, setPlaybackUrl] = useState<string | null>(null)
   const [activeRecordingId, setActiveRecordingId] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [semanticQuery, setSemanticQuery] = useState("")
+  const [semanticLoading, setSemanticLoading] = useState(false)
+  const [semanticError, setSemanticError] = useState<string | null>(null)
+  const [semanticHits, setSemanticHits] = useState<SemanticSearchHitDto[]>([])
+  /** From GET /semantic-search/status; null = unknown (probe failed or not loaded yet). */
+  const [semanticStatus, setSemanticStatus] = useState<SemanticSearchStatusDto | null>(null)
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+  const pendingSeekSecRef = useRef<number | null>(null)
 
   const filtersRef = useRef({
     cameraFilter,
@@ -100,8 +120,19 @@ export function RecordingsHistory() {
     startTime,
     endDate,
     endTime,
+    objectTypeFilter,
   })
-  filtersRef.current = { cameraFilter, startDate, startTime, endDate, endTime }
+  filtersRef.current = { cameraFilter, startDate, startTime, endDate, endTime, objectTypeFilter }
+
+  /**
+   * Surveillance API JWT (same source as recordings list / playback).
+   * While `loading` is true, ignore stale `token` so a refresh never reuses a prior session's JWT.
+   */
+  const getSurveillanceAccessTokenOrNull = useCallback((): string | null => {
+    if (surveillanceTokenRef.current) return surveillanceTokenRef.current
+    if (loading) return null
+    return token
+  }, [loading, token])
 
   const cameraNameById = useMemo(() => {
     const m = new Map<string, string>()
@@ -136,10 +167,20 @@ export function RecordingsHistory() {
   const load = useCallback(async () => {
     setError(null)
     setLoading(true)
+    surveillanceTokenRef.current = null
     const f = filtersRef.current
+    let acquiredTok: string | null = null
     try {
       const tok = await fetchSurveillanceAccessToken(operator)
+      acquiredTok = tok
+      surveillanceTokenRef.current = tok
       setToken(tok)
+      setSemanticStatus(null)
+      try {
+        setSemanticStatus(await fetchSemanticSearchStatus({ token: tok }))
+      } catch {
+        setSemanticStatus(null)
+      }
       const camList = await fetchCameras().catch(() => [])
       setCameras(camList)
 
@@ -156,39 +197,148 @@ export function RecordingsHistory() {
       })
       setRows(list.items)
       setTotal(list.total)
+
+      const dlist = await fetchDetections({
+        token: tok,
+        cameraId: f.cameraFilter === "all" ? undefined : f.cameraFilter,
+        objectType: f.objectTypeFilter === "all" ? undefined : f.objectTypeFilter,
+        eventAfter: startIso,
+        eventBefore: endIso,
+        limit: 100,
+        offset: 0,
+      })
+      setDetRows(dlist.items)
+      setDetTotal(dlist.total)
     } catch (e) {
+      if (!acquiredTok) {
+        surveillanceTokenRef.current = null
+        setToken(null)
+      }
       setError(e instanceof Error ? e.message : "Failed to load recordings.")
       setRows([])
       setTotal(0)
+      setDetRows([])
+      setDetTotal(0)
+      setSemanticStatus(null)
     } finally {
       setLoading(false)
     }
   }, [operator])
 
   useEffect(() => {
+    if (isCheckingAuth) return
     void load()
-  }, [load])
+  }, [load, isCheckingAuth])
 
   const play = async (id: string) => {
-    if (!token) {
-      setError("Not authenticated with surveillance API yet.")
+    const t = getSurveillanceAccessTokenOrNull()
+    if (!t) {
+      setError(loading ? "Connecting to surveillance API…" : "Not authenticated with surveillance API yet.")
       return
     }
     setError(null)
     try {
-      const pb = await fetchRecordingPlaybackUrl(token, id, 2)
+      pendingSeekSecRef.current = null
+      const pb = await fetchRecordingPlaybackUrl(t, id, 2)
       setPlaybackUrl(pb.url)
       setActiveRecordingId(id)
     } catch (e) {
       setError(e instanceof Error ? e.message : "Playback failed.")
       setPlaybackUrl(null)
       setActiveRecordingId(null)
+      pendingSeekSecRef.current = null
+    }
+  }
+
+  const runSemanticSearch = async () => {
+    const t = getSurveillanceAccessTokenOrNull()
+    if (!t) {
+      setSemanticError(loading ? "Connecting to surveillance API…" : "Not authenticated with surveillance API yet.")
+      return
+    }
+    if (semanticStatus && !semanticStatus.configured) {
+      setSemanticError(semanticStatus.detail || "Semantic search is not available on this server.")
+      return
+    }
+    const q = semanticQuery.trim()
+    if (!q) {
+      setSemanticError("Enter a short description to search.")
+      return
+    }
+    setSemanticError(null)
+    setSemanticLoading(true)
+    try {
+      const res = await fetchSemanticSearch({
+        token: t,
+        query: q,
+        top_k: 20,
+        cameraId: cameraFilter === "all" ? undefined : cameraFilter,
+      })
+      if (!res.enabled) {
+        setSemanticHits([])
+        setSemanticError(res.detail || "Semantic search is not available on this server.")
+        return
+      }
+      setSemanticHits(res.results)
+      if (res.results.length === 0) {
+        setSemanticError(
+          res.detail || "No matches. Ensure the AI worker has indexed segments (CLIP + Milvus) after recordings exist.",
+        )
+      } else {
+        setSemanticError(null)
+      }
+    } catch (e) {
+      setSemanticHits([])
+      setSemanticError(e instanceof Error ? e.message : "Semantic search failed.")
+    } finally {
+      setSemanticLoading(false)
+    }
+  }
+
+  const playFromSemantic = async (recordingId: string, offsetMs: number) => {
+    const t = getSurveillanceAccessTokenOrNull()
+    if (!t) {
+      setError(loading ? "Connecting to surveillance API…" : "Not authenticated with surveillance API yet.")
+      return
+    }
+    setError(null)
+    try {
+      const pb = await fetchRecordingPlaybackUrl(t, recordingId, 2)
+      pendingSeekSecRef.current = offsetMs / 1000.0
+      setPlaybackUrl(pb.url)
+      setActiveRecordingId(recordingId)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Playback failed.")
+      setPlaybackUrl(null)
+      setActiveRecordingId(null)
+      pendingSeekSecRef.current = null
+    }
+  }
+
+  const playFromDetection = async (detectionId: string) => {
+    const t = getSurveillanceAccessTokenOrNull()
+    if (!t) {
+      setError(loading ? "Connecting to surveillance API…" : "Not authenticated with surveillance API yet.")
+      return
+    }
+    setError(null)
+    try {
+      const pb = await fetchDetectionPlaybackUrl(t, detectionId, 2)
+      pendingSeekSecRef.current = pb.timestamp_offset_ms / 1000.0
+      setPlaybackUrl(pb.url)
+      setActiveRecordingId(pb.recording_id)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Playback failed.")
+      setPlaybackUrl(null)
+      setActiveRecordingId(null)
+      pendingSeekSecRef.current = null
     }
   }
 
   const remove = async (id: string) => {
-    if (!token) {
-      setError("Not authenticated with surveillance API yet.")
+    const t = getSurveillanceAccessTokenOrNull()
+    if (!t) {
+      setError(loading ? "Connecting to surveillance API…" : "Not authenticated with surveillance API yet.")
       return
     }
     if (!window.confirm("Delete this recording from storage and the catalog? This cannot be undone.")) {
@@ -197,10 +347,11 @@ export function RecordingsHistory() {
     setError(null)
     setDeletingId(id)
     try {
-      await deleteRecording(token, id)
+      await deleteRecording(t, id)
       if (activeRecordingId === id) {
         setPlaybackUrl(null)
         setActiveRecordingId(null)
+        pendingSeekSecRef.current = null
       }
       setRows((prev) => prev.filter((r) => r.id !== id))
       setTotal((n) => Math.max(0, n - 1))
@@ -213,6 +364,94 @@ export function RecordingsHistory() {
 
   return (
     <div className="space-y-6">
+      <Card className="bg-card/50 backdrop-blur-sm border-slate-700/50">
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Search className="h-4 w-4 text-amber-400" />
+            Semantic visual search
+          </CardTitle>
+          <CardDescription className="text-xs">
+            Natural-language scene search (CLIP embeddings on sampled frames). Uses the same sparse sampling as offline
+            AI; results open signed playback and seek to the moment.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {semanticStatus && semanticStatus.detail && (!semanticStatus.configured || !semanticStatus.index_ready) && (
+            <p
+              className={`text-xs ${semanticStatus.configured ? "text-amber-200/85" : "text-muted-foreground"}`}
+              role="status"
+            >
+              {semanticStatus.detail}
+            </p>
+          )}
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <Input
+              type="search"
+              placeholder='Try: hand, crowd, bicycle near road, person sitting…'
+              value={semanticQuery}
+              onChange={(e) => setSemanticQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void runSemanticSearch()
+              }}
+              className="h-10 flex-1 bg-background/80 border-slate-600 text-sm"
+              aria-label="Semantic search query"
+              disabled={
+                semanticLoading ||
+                !getSurveillanceAccessTokenOrNull() ||
+                !!(semanticStatus && !semanticStatus.configured)
+              }
+            />
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="h-10 shrink-0 border-amber-500/30 text-amber-200"
+              disabled={
+                semanticLoading ||
+                !getSurveillanceAccessTokenOrNull() ||
+                !!(semanticStatus && !semanticStatus.configured)
+              }
+              onClick={() => void runSemanticSearch()}
+            >
+              {semanticLoading ? "Searching…" : "Search"}
+            </Button>
+          </div>
+          {semanticError && (
+            <p className="text-xs text-amber-200/90" role="status">
+              {semanticError}
+            </p>
+          )}
+          {semanticHits.length > 0 && (
+            <div className="rounded-md border border-slate-700/60 bg-muted/10 max-h-48 overflow-y-auto text-sm">
+              <ul className="divide-y divide-slate-800/80">
+                {semanticHits.map((h) => (
+                  <li key={`${h.recording_segment_id}-${h.timestamp_offset_ms}-${h.vector_id ?? ""}`} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+                    <div className="min-w-0">
+                      <div className="font-medium text-foreground truncate">
+                        {cameraNameById.get(h.camera_id) ?? h.camera_id.slice(0, 8)}
+                      </div>
+                      <div className="text-xs text-muted-foreground truncate" title={h.recording_segment_id}>
+                        {(h.timestamp_offset_ms / 1000).toFixed(1)}s · score {(h.similarity * 100).toFixed(0)}%
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="shrink-0 border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/10"
+                      onClick={() => void playFromSemantic(h.recording_segment_id, h.timestamp_offset_ms)}
+                    >
+                      <Play className="h-3 w-3 mr-1" />
+                      Play
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       <Card className="bg-card/50 backdrop-blur-sm border-slate-700/50">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-xl">
@@ -240,7 +479,7 @@ export function RecordingsHistory() {
             </Button>
           </div>
 
-          <div className="grid gap-5 lg:grid-cols-2">
+          <div className="grid gap-5 lg:grid-cols-3">
             <div className="space-y-2">
               <Label>Camera</Label>
               <Select value={cameraFilter} onValueChange={setCameraFilter}>
@@ -254,6 +493,25 @@ export function RecordingsHistory() {
                       {c.name}
                     </SelectItem>
                   ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Object (AI)</Label>
+              <Select value={objectTypeFilter} onValueChange={setObjectTypeFilter}>
+                <SelectTrigger className="h-11 bg-background/60 border-slate-600 text-base">
+                  <SelectValue placeholder="All types" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All types</SelectItem>
+                  <SelectItem value="person">person</SelectItem>
+                  <SelectItem value="bicycle">bicycle</SelectItem>
+                  <SelectItem value="car">car</SelectItem>
+                  <SelectItem value="motorcycle">motorcycle</SelectItem>
+                  <SelectItem value="bus">bus</SelectItem>
+                  <SelectItem value="truck">truck</SelectItem>
+                  <SelectItem value="backpack">backpack</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -373,10 +631,18 @@ export function RecordingsHistory() {
           </CardHeader>
           <CardContent>
             <video
+              ref={videoRef}
               key={playbackUrl}
               className="w-full max-h-[420px] rounded-md border border-slate-700 bg-black"
               controls
               src={playbackUrl}
+              onLoadedMetadata={(e) => {
+                const t = pendingSeekSecRef.current
+                if (t != null && Number.isFinite(t)) {
+                  e.currentTarget.currentTime = Math.max(0, t)
+                  pendingSeekSecRef.current = null
+                }
+              }}
             />
           </CardContent>
         </Card>
@@ -452,6 +718,70 @@ export function RecordingsHistory() {
                             {deletingId === r.id ? "…" : "Delete"}
                           </Button>
                         </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="bg-card/50 backdrop-blur-sm border-slate-700/50 overflow-hidden">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">Object detections (AI processing)</CardTitle>
+          <CardDescription className="text-xs">
+            YOLOv8n on stored segments. Showing {detRows.length} of {detTotal} in range — run the ai-processor service to
+            populate results.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="p-0">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/30 text-left text-muted-foreground">
+                <tr>
+                  <th className="p-3 font-medium">Camera</th>
+                  <th className="p-3 font-medium">Type</th>
+                  <th className="p-3 font-medium">Confidence</th>
+                  <th className="p-3 font-medium">Event time</th>
+                  <th className="p-3 font-medium">Offset</th>
+                  <th className="p-3 font-medium whitespace-nowrap">Playback</th>
+                </tr>
+              </thead>
+              <tbody>
+                {detRows.length === 0 && !loading ? (
+                  <tr>
+                    <td colSpan={6} className="p-8 text-center text-muted-foreground">
+                      No detections in this range. After the AI worker scans recordings, rows appear here; use the same
+                      date and camera filters as above.
+                    </td>
+                  </tr>
+                ) : (
+                  detRows.map((d) => (
+                    <tr key={d.id} className="border-t border-slate-800/80 hover:bg-muted/10">
+                      <td className="p-3 align-top">
+                        {cameraNameById.get(d.camera_id) ?? d.camera_id.slice(0, 8)}
+                      </td>
+                      <td className="p-3 align-top">
+                        <Badge variant="outline" className="text-xs font-normal">
+                          {d.object_type}
+                        </Badge>
+                      </td>
+                      <td className="p-3 align-top">{d.confidence.toFixed(2)}</td>
+                      <td className="p-3 align-top whitespace-nowrap">{formatDt(d.absolute_event_time)}</td>
+                      <td className="p-3 align-top text-muted-foreground">{(d.timestamp_offset_ms / 1000).toFixed(1)}s</td>
+                      <td className="p-3 align-top">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/10"
+                          onClick={() => void playFromDetection(d.id)}
+                        >
+                          <Play className="h-3.5 w-3.5 mr-1" />
+                          Play clip
+                        </Button>
                       </td>
                     </tr>
                   ))

@@ -1,29 +1,58 @@
 from datetime import datetime, timedelta
+import logging
 from typing import List, Optional
+
+import inspect
 
 from fastapi import FastAPI, Depends, File, Form, HTTPException, Query, UploadFile, status, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import Session
+from starlette.requests import Request
 
-from . import services, database, auth, schemas, recording_service
+from . import services, database, auth, schemas, recording_service, detection_service, recording_clip_search
+from shared.recording_clip_milvus import register_recording_clip_collection_dropped_hook
+
+register_recording_clip_collection_dropped_hook(recording_clip_search.invalidate_recording_clip_collection_cache)
+
 from .ai_service import AIService
 from .schemas import AIRequest
 from .storage_service import MinIOStorageService
 
-from shared.models import User, Event
+from shared.models import User, Event, RecordingDetection
 from shared.models import Camera as CameraModel
 from .schemas import Camera as CameraSchema, CameraCreate, CameraUpdate
 
 app = FastAPI()
 # Browsers cannot combine allow_origins=["*"] with allow_credentials=True; use * for dev tooling / OPTIONS preflight.
-app.add_middleware(
-    CORSMiddleware,
+_cors_params = dict(
     allow_origins=["*"],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+if "allow_private_network" in inspect.signature(CORSMiddleware.__init__).parameters:
+    # Chrome PNA preflight (Access-Control-Request-Private-Network); without True, OPTIONS → 400 → "CORS" errors.
+    _cors_params["allow_private_network"] = True
+app.add_middleware(CORSMiddleware, **_cors_params)
+
+logger = logging.getLogger(__name__)
+
+
+async def _database_error_response(request: Request, exc: Exception) -> JSONResponse:
+    """Return JSON 500 so the browser gets a normal response body (CORS headers apply)."""
+    logger.exception("Database error %s %s", request.method, request.url.path)
+    msg = getattr(exc, "orig", None) or str(exc)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Database error", "message": str(msg)[:800]},
+    )
+
+
+app.add_exception_handler(ProgrammingError, _database_error_response)
+app.add_exception_handler(OperationalError, _database_error_response)
 
 ai_service = AIService()
 recording_storage = MinIOStorageService()
@@ -43,8 +72,12 @@ def startup_event():
             db.refresh(admin_user)
     finally:
         db.close()
+    try:
+        recording_clip_search.warmup_recording_clip_milvus()
+    except Exception as e:
+        logger.warning("Milvus semantic warmup skipped: %s", e)
 
-# --- Auth Endpoints ---
+
 @app.post("/api/v1/token", response_model=schemas.Token)
 def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(database.get_db)):
     if auth.allow_any_login():
@@ -320,6 +353,56 @@ def get_recording(
     return row
 
 
+@app.get("/api/v1/semantic-search/status", response_model=schemas.SemanticSearchStatusResponse)
+def get_semantic_search_status(
+    current_user: User = Depends(auth.get_current_active_user),
+):
+    """Whether semantic search can run in this API process; do not infer from client-side env."""
+    configured, index_ready, detail = recording_clip_search.semantic_search_status()
+    return schemas.SemanticSearchStatusResponse(
+        configured=configured,
+        index_ready=index_ready,
+        detail=detail,
+    )
+
+
+@app.post("/api/v1/semantic-search", response_model=schemas.SemanticSearchResponse)
+def semantic_search_recording_frames(
+    body: schemas.SemanticSearchRequest,
+    current_user: User = Depends(auth.get_current_active_user),
+):
+    top_k = max(1, min(50, int(body.top_k)))
+    hits, enabled, err = recording_clip_search.run_semantic_search(
+        body.query,
+        top_k=top_k,
+        camera_id=body.camera_id,
+    )
+    if not enabled:
+        return schemas.SemanticSearchResponse(
+            results=[],
+            enabled=False,
+            detail=err,
+        )
+    if err:
+        return schemas.SemanticSearchResponse(results=[], enabled=True, detail=err)
+    items: List[schemas.SemanticSearchHit] = []
+    for h in hits:
+        rid = h.get("recording_segment_id")
+        if not rid:
+            continue
+        items.append(
+            schemas.SemanticSearchHit(
+                vector_id=h.get("id"),
+                recording_segment_id=str(rid),
+                camera_id=str(h.get("camera_id") or ""),
+                timestamp_offset_ms=int(h.get("timestamp_offset_ms") or 0),
+                similarity=float(h.get("similarity") or 0.0),
+                model_version=h.get("model_version"),
+            )
+        )
+    return schemas.SemanticSearchResponse(results=items, enabled=True, detail=None)
+
+
 @app.get("/api/v1/recordings/{recording_id}/playback", response_model=schemas.RecordingPlaybackResponse)
 def get_recording_playback_url(
     recording_id: str,
@@ -366,6 +449,105 @@ def delete_recording(
     db.delete(row)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+def _absolute_event_time(segment_start: datetime, offset_ms: int) -> datetime:
+    return segment_start + timedelta(milliseconds=offset_ms)
+
+
+def _detection_to_schema(row: RecordingDetection) -> schemas.RecordingDetectionOut:
+    seg = row.segment
+    if seg is None:
+        raise HTTPException(status_code=500, detail="Detection row missing segment join")
+    return schemas.RecordingDetectionOut(
+        id=row.id,
+        recording_segment_id=row.recording_segment_id,
+        camera_id=row.camera_id,
+        object_type=row.object_type,
+        confidence=row.confidence,
+        timestamp_offset_ms=row.timestamp_offset_ms,
+        bounding_box=row.bounding_box,
+        created_at=row.created_at,
+        absolute_event_time=_absolute_event_time(seg.start_time, row.timestamp_offset_ms),
+    )
+
+
+@app.get("/api/v1/detections", response_model=schemas.DetectionListResponse)
+def list_detections(
+    camera_id: Optional[str] = None,
+    object_type: Optional[str] = None,
+    recording_segment_id: Optional[str] = None,
+    event_after: Optional[datetime] = None,
+    event_before: Optional[datetime] = None,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(database.get_db),
+    current_user: User = Depends(auth.get_current_active_user),
+):
+    rows, total = detection_service.list_detections(
+        db,
+        camera_id=camera_id,
+        object_type=object_type,
+        recording_segment_id=recording_segment_id,
+        event_after=event_after,
+        event_before=event_before,
+        limit=limit,
+        offset=offset,
+    )
+    return schemas.DetectionListResponse(
+        items=[_detection_to_schema(r) for r in rows],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@app.get("/api/v1/detections/{detection_id}", response_model=schemas.RecordingDetectionOut)
+def get_detection(
+    detection_id: str,
+    db: Session = Depends(database.get_db),
+    current_user: User = Depends(auth.get_current_active_user),
+):
+    row = detection_service.get_detection_by_id(db, detection_id)
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Detection not found")
+    return _detection_to_schema(row)
+
+
+@app.get("/api/v1/detections/{detection_id}/playback", response_model=schemas.DetectionPlaybackResponse)
+def get_detection_playback(
+    detection_id: str,
+    expiry_hours: int = Query(1, ge=1, le=72),
+    db: Session = Depends(database.get_db),
+    current_user: User = Depends(auth.get_current_active_user),
+):
+    row = detection_service.get_detection_by_id(db, detection_id)
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Detection not found")
+    seg = row.segment
+    if not seg:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Recording segment missing")
+    url = recording_storage.get_presigned_url(
+        seg.object_key,
+        expiry_hours=expiry_hours,
+        bucket_name=seg.bucket_name,
+    )
+    if not url:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not generate playback URL for object storage",
+        )
+    abs_t = _absolute_event_time(seg.start_time, row.timestamp_offset_ms)
+    return schemas.DetectionPlaybackResponse(
+        detection_id=row.id,
+        recording_id=seg.id,
+        timestamp_offset_ms=row.timestamp_offset_ms,
+        absolute_event_time=abs_t,
+        url=url,
+        bucket_name=seg.bucket_name,
+        object_key=seg.object_key,
+        expires_in_seconds=int(expiry_hours * 3600),
+    )
 
 
 # --- Event & Search Endpoints ---

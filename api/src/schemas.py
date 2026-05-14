@@ -45,6 +45,40 @@ class RecordingPlaybackResponse(BaseModel):
     object_key: str
     expires_in_seconds: int
 
+
+class RecordingDetectionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    recording_segment_id: str
+    camera_id: str
+    object_type: str
+    confidence: float
+    timestamp_offset_ms: int
+    bounding_box: Dict[str, Any]
+    created_at: datetime
+    absolute_event_time: datetime
+
+
+class DetectionListResponse(BaseModel):
+    items: List[RecordingDetectionOut]
+    total: int
+    limit: int
+    offset: int
+
+
+class DetectionPlaybackResponse(BaseModel):
+    """Presigned segment URL plus fields for client seek (HTML video currentTime)."""
+
+    detection_id: str
+    recording_id: str
+    timestamp_offset_ms: int
+    absolute_event_time: datetime
+    url: str
+    bucket_name: str
+    object_key: str
+    expires_in_seconds: int
+
 # --- Token Schemas ---
 class Token(BaseModel):
     access_token: str
@@ -104,3 +138,33 @@ class CameraUpdate(BaseModel):
 # --- AI Schemas ---
 class AIRequest(BaseModel):
     query: str
+
+
+# --- Semantic visual search (CLIP + Milvus recording_clip_frames) ---
+class SemanticSearchRequest(BaseModel):
+    query: str
+    top_k: int = 20
+    camera_id: Optional[str] = None
+
+
+class SemanticSearchHit(BaseModel):
+    vector_id: Optional[str] = None
+    recording_segment_id: str
+    camera_id: str
+    timestamp_offset_ms: int
+    similarity: float
+    model_version: Optional[str] = None
+
+
+class SemanticSearchResponse(BaseModel):
+    results: List[SemanticSearchHit]
+    enabled: bool = True
+    detail: Optional[str] = None
+
+
+class SemanticSearchStatusResponse(BaseModel):
+    """Backend-owned semantic search capability; clients must not infer this from Milvus env vars."""
+
+    configured: bool = False
+    index_ready: bool = False
+    detail: Optional[str] = None
