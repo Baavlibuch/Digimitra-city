@@ -5,6 +5,7 @@ Sequential offline scan: one recording segment at a time, bounded frame rate.
 from __future__ import annotations
 
 import logging
+import math
 import os
 import time
 import uuid
@@ -115,17 +116,41 @@ def process_next_segment(SessionLocal: sessionmaker) -> bool:
             clip_rows = []
             clip_collection = None
             clip_stride = max(1, int(os.environ.get("CLIP_EMBED_EVERY_N_FRAMES", "1")))
-            if _clip_milvus_enabled():
+            clip_milvus_enabled = _clip_milvus_enabled()
+            logger.info(
+                "CLIP indexing: segment=%s enabled=%s stride=%s",
+                seg.id,
+                clip_milvus_enabled,
+                clip_stride,
+            )
+            if clip_milvus_enabled:
                 try:
                     host, port = milvus_host_port_from_env()
                     clip_collection = ensure_recording_clip_collection(host, port) if host else None
                     if clip_collection:
+                        entities_before = getattr(clip_collection, "num_entities", None)
                         delete_vectors_for_segment(clip_collection, seg.id)
+                        logger.info(
+                            "CLIP Milvus ready segment=%s host=%s port=%s collection_entities_before=%s",
+                            seg.id,
+                            host,
+                            port,
+                            entities_before,
+                        )
+                    else:
+                        logger.warning(
+                            "CLIP Milvus collection unavailable segment=%s host=%s port=%s",
+                            seg.id,
+                            host,
+                            port,
+                        )
                 except Exception as e:
                     logger.warning("CLIP/Milvus init failed (YOLO-only for this segment): %s", e)
                     clip_collection = None
 
+            frames_sampled = 0
             for frame_idx, (frame, off_ms) in enumerate(iter_spaced_frames(tmp_path, interval)):
+                frames_sampled += 1
                 for d in run_detection(frame, offset_ms=off_ms, conf_threshold=conf):
                     db.add(
                         RecordingDetection(
@@ -144,6 +169,24 @@ def process_next_segment(SessionLocal: sessionmaker) -> bool:
                         from clip_embedder import encode_image_bgr
 
                         vec = encode_image_bgr(frame)
+                        if not vec:
+                            logger.warning(
+                                "CLIP embed empty segment=%s offset_ms=%s frame_idx=%s",
+                                seg.id,
+                                off_ms,
+                                frame_idx,
+                            )
+                            continue
+                        dim = len(vec)
+                        norm = math.sqrt(sum(float(x) * float(x) for x in vec))
+                        if frame_idx == 0 or len(clip_rows) == 0:
+                            logger.info(
+                                "CLIP embed ok segment=%s offset_ms=%s dim=%s L2_norm=%.4f",
+                                seg.id,
+                                off_ms,
+                                dim,
+                                norm,
+                            )
                         clip_rows.append(
                             {
                                 "id": deterministic_clip_vector_id(seg.id, off_ms),
@@ -157,20 +200,44 @@ def process_next_segment(SessionLocal: sessionmaker) -> bool:
                     except Exception as e:
                         logger.warning("CLIP embed failed offset_ms=%s: %s", off_ms, e)
 
+            logger.info(
+                "CLIP indexing summary segment=%s frames_sampled=%s clip_vectors=%s milvus_collection=%s",
+                seg.id,
+                frames_sampled,
+                len(clip_rows),
+                clip_collection is not None,
+            )
             if clip_collection and clip_rows:
                 try:
+                    entities_before_insert = getattr(clip_collection, "num_entities", None)
                     if not insert_frame_embeddings(clip_collection, clip_rows):
                         logger.warning("Milvus insert had failures for segment=%s", seg.id)
+                    else:
+                        logger.info(
+                            "Milvus insert ok segment=%s rows=%s collection_entities_before=%s collection_entities_after=%s",
+                            seg.id,
+                            len(clip_rows),
+                            entities_before_insert,
+                            getattr(clip_collection, "num_entities", None),
+                        )
                 except Exception as e:
                     logger.warning("Milvus insert failed (detections still saved): %s", e)
+            elif clip_milvus_enabled and not clip_rows:
+                logger.warning(
+                    "CLIP indexing produced zero vectors segment=%s frames_sampled=%s collection=%s",
+                    seg.id,
+                    frames_sampled,
+                    clip_collection is not None,
+                )
 
             seg.ai_scan_completed_at = datetime.utcnow()
             seg.ai_scan_last_error = None
             db.commit()
             logger.info(
-                "AI scan completed segment=%s detections_inserted=%s",
+                "AI scan completed segment=%s detections_inserted=%s clip_vectors=%s",
                 seg.id,
                 detection_count,
+                len(clip_rows),
             )
             return True
         except Exception as e:

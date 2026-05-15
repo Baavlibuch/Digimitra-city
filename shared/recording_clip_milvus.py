@@ -637,6 +637,7 @@ def delete_vectors_for_segment(collection: Any, recording_segment_id: str) -> No
 
 def insert_frame_embeddings(collection: Any, rows: List[Dict[str, Any]]) -> bool:
     if not rows:
+        logger.debug("insert_frame_embeddings: no rows (noop)")
         return True
     ids: List[str] = []
     seg_ids: List[str] = []
@@ -651,12 +652,33 @@ def insert_frame_embeddings(collection: Any, rows: List[Dict[str, Any]]) -> bool
         offsets.append(int(r["timestamp_offset_ms"]))
         versions.append(str(r.get("model_version", ""))[:64])
         vectors.append(_l2_normalize_embedding_list(list(r["embedding"])))
+    seg_id = seg_ids[0] if seg_ids else "?"
+    sample = vectors[0] if vectors else []
+    sample_norm = 0.0
+    if sample:
+        sample_norm = sum(float(x) * float(x) for x in sample) ** 0.5
+    entities_before = getattr(collection, "num_entities", None)
+    logger.info(
+        "insert_frame_embeddings: segment=%s count=%s dim=%s sample_L2_norm=%.4f entities_before=%s",
+        seg_id,
+        len(rows),
+        len(sample),
+        sample_norm,
+        entities_before,
+    )
     try:
         collection.insert([ids, seg_ids, cam_ids, offsets, versions, vectors])
         collection.flush()
+        entities_after = getattr(collection, "num_entities", None)
+        logger.info(
+            "insert_frame_embeddings: success segment=%s inserted=%s entities_after=%s",
+            seg_id,
+            len(rows),
+            entities_after,
+        )
         return True
     except Exception as e:
-        logger.error("Milvus insert_frame_embeddings failed: %s", e)
+        logger.error("Milvus insert_frame_embeddings failed segment=%s count=%s: %s", seg_id, len(rows), e)
         return False
 
 

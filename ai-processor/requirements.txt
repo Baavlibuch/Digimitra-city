@@ -17,4 +17,6 @@ minio>=7.2.0
 sqlalchemy>=1.4.0,<3
 psycopg2-binary>=2.9.0,<3
 pymilvus>=2.2.0,<2.4
+# pymilvus → environs expects marshmallow 3.x (__version_info__); ST/torch stack may pull 4.x
+marshmallow>=3.13.0,<4
 sentence-transformers>=2.2.0,<4
