@@ -5,8 +5,19 @@
 
 import { getStoredAccessToken } from "@/src/lib/auth-token"
 
-const defaultBase = () =>
-  (typeof process !== "undefined" && process.env.NEXT_PUBLIC_SURVEILLANCE_API_URL) || "http://127.0.0.1:8000"
+/**
+ * Surveillance FastAPI base URL.
+ * Prefer `localhost` over `127.0.0.1` on Windows: a local dev API often binds only to 127.0.0.1
+ * while Docker publishes `0.0.0.0:8000` — `127.0.0.1:8000` then hits the wrong process (no Milvus).
+ */
+const defaultBase = () => {
+  if (typeof process === "undefined") return "http://localhost:8000"
+  return (
+    process.env.NEXT_PUBLIC_SURVEILLANCE_API_URL?.trim() ||
+    process.env.NEXT_PUBLIC_API_BASE_URL?.trim() ||
+    "http://localhost:8000"
+  )
+}
 
 export async function fetchSurveillanceAccessToken(username: string): Promise<string> {
   const base = defaultBase().replace(/\/$/, "")
@@ -263,19 +274,57 @@ export type SemanticSearchStatusDto = {
   detail?: string | null
 }
 
-/** Parse GET /semantic-search/status body — tolerates camelCase and string booleans from proxies. */
-export function coerceSemanticSearchStatusDto(raw: unknown): SemanticSearchStatusDto {
-  if (raw == null || typeof raw !== "object") {
+/** True when Milvus is configured and the semantic index is loadable (search can run). */
+export function isSemanticSearchOperational(status: SemanticSearchStatusDto | null | undefined): boolean {
+  return Boolean(status?.configured && status?.index_ready)
+}
+
+/** Poll while index may still be warming; stop when Milvus is not configured at all. */
+export function shouldRetrySemanticStatusPoll(status: SemanticSearchStatusDto | null | undefined): boolean {
+  if (status == null) return true
+  if (!status.configured) return false
+  return !status.index_ready
+}
+
+function unwrapSemanticStatusPayload(raw: unknown): Record<string, unknown> {
+  if (raw == null || typeof raw !== "object" || Array.isArray(raw)) {
     throw new Error("Semantic search status: response was not a JSON object.")
   }
   const r = raw as Record<string, unknown>
+  for (const key of ["data", "body", "result"] as const) {
+    const nested = r[key]
+    if (nested != null && typeof nested === "object" && !Array.isArray(nested)) {
+      return nested as Record<string, unknown>
+    }
+  }
+  return r
+}
+
+/** Parse GET /semantic-search/status body — tolerates camelCase and string booleans from proxies. */
+export function coerceSemanticSearchStatusDto(raw: unknown): SemanticSearchStatusDto {
+  const r = unwrapSemanticStatusPayload(raw)
   const pickBool = (v: unknown): boolean =>
     v === true || v === 1 || v === "1" || v === "true" || v === "True"
-  const configured = pickBool(r.configured ?? r.Configured)
-  const index_ready = pickBool(r.index_ready ?? r.indexReady)
-  const d = r.detail
-  const detail =
-    d == null || d === "" ? null : typeof d === "string" ? d : String(d)
+
+  const configuredRaw = r.configured ?? r.Configured
+  const indexReadyRaw = r.index_ready ?? r.indexReady
+  const enabledLegacy = r.enabled ?? r.Enabled
+
+  let configured = pickBool(configuredRaw)
+  let index_ready = pickBool(indexReadyRaw)
+
+  if (configuredRaw === undefined && indexReadyRaw === undefined && enabledLegacy !== undefined) {
+    const en = pickBool(enabledLegacy)
+    configured = en
+    index_ready = en
+  }
+
+  if (!configured && index_ready) {
+    configured = true
+  }
+
+  const d = r.detail ?? r.Detail
+  const detail = d == null || d === "" ? null : typeof d === "string" ? d : String(d)
   return { configured, index_ready, detail }
 }
 
@@ -339,7 +388,10 @@ export async function fetchSemanticSearchStatus(params?: {
       if (res.ok) {
         try {
           const raw = JSON.parse(text) as unknown
-          return coerceSemanticSearchStatusDto(raw)
+          console.log("[semantic-search/status] HTTP 200 response body:", raw)
+          const parsed = coerceSemanticSearchStatusDto(raw)
+          console.log("[semantic-search/status] coerced availability:", parsed)
+          return parsed
         } catch (parseErr) {
           console.warn("[semantic-search/status] invalid JSON:", text.slice(0, 400), parseErr)
           const err = new Error("Semantic search status returned invalid JSON.") as Error & { status: number }

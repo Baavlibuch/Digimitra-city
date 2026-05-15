@@ -25,6 +25,8 @@ import {
   fetchDetectionPlaybackUrl,
   fetchSemanticSearch,
   fetchSemanticSearchStatus,
+  isSemanticSearchOperational,
+  shouldRetrySemanticStatusPoll,
   type CameraDto,
   type RecordingSegmentDto,
   type DetectionDto,
@@ -114,6 +116,7 @@ export function RecordingsHistory() {
   const [semanticStatusLoading, setSemanticStatusLoading] = useState(false)
   /** User-facing probe failure (auth/network/etc.); never substitute for Milvus "not configured". */
   const [semanticStatusFetchError, setSemanticStatusFetchError] = useState<string | null>(null)
+  const semanticPollGenRef = useRef(0)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const pendingSeekSecRef = useRef<number | null>(null)
 
@@ -134,9 +137,12 @@ export function RecordingsHistory() {
       const s = await fetchSemanticSearchStatus({
         token: surveillanceAccessToken ?? undefined,
       })
+      console.log("[recordings-history] semantic search status:", s)
       setSemanticStatus(s)
-      // Stale POST errors (e.g. prior `enabled: false` / Milvus detail) must not outlive a successful status probe.
-      setSemanticError(null)
+      if (isSemanticSearchOperational(s)) {
+        setSemanticError(null)
+      }
+      return s
     } catch (e) {
       setSemanticStatus(null)
       const httpStatus =
@@ -159,6 +165,7 @@ export function RecordingsHistory() {
       }
       setSemanticStatusFetchError(message)
       console.warn("[recordings-history] semantic search status request failed:", e)
+      return null
     } finally {
       setSemanticStatusLoading(false)
     }
@@ -173,6 +180,47 @@ export function RecordingsHistory() {
     if (loading) return null
     return token
   }, [loading, token])
+
+  /** Re-probe while Milvus/index may still be warming after API startup (avoids stale configured=false). */
+  useEffect(() => {
+    if (isCheckingAuth) return
+    const tok = getSurveillanceAccessTokenOrNull()
+    if (!tok) return
+    if (semanticStatusFetchError) return
+    if (!shouldRetrySemanticStatusPoll(semanticStatus)) return
+
+    const gen = ++semanticPollGenRef.current
+    let cancelled = false
+    const delaysMs = [0, 2000, 4000, 6000, 8000, 10000, 15000, 20000, 30000]
+
+    const poll = async () => {
+      for (const delayMs of delaysMs) {
+        if (cancelled || semanticPollGenRef.current !== gen) return
+        if (delayMs > 0) {
+          await new Promise<void>((resolve) => setTimeout(resolve, delayMs))
+        }
+        if (cancelled || semanticPollGenRef.current !== gen) return
+        const s = await refreshSemanticStatus(tok)
+        if (cancelled || semanticPollGenRef.current !== gen) return
+        if (isSemanticSearchOperational(s)) return
+        if (s?.configured === false) return
+      }
+    }
+
+    void poll()
+    return () => {
+      cancelled = true
+    }
+  }, [
+    isCheckingAuth,
+    token,
+    loading,
+    semanticStatus?.configured,
+    semanticStatus?.index_ready,
+    semanticStatusFetchError,
+    refreshSemanticStatus,
+    getSurveillanceAccessTokenOrNull,
+  ])
 
   const cameraNameById = useMemo(() => {
     const m = new Map<string, string>()
@@ -257,6 +305,10 @@ export function RecordingsHistory() {
       setDetTotal(0)
     } finally {
       setLoading(false)
+      const t = surveillanceTokenRef.current
+      if (t) {
+        void refreshSemanticStatus(t)
+      }
     }
   }, [operator, refreshSemanticStatus])
 
@@ -398,12 +450,21 @@ export function RecordingsHistory() {
   }
 
   const showSemanticNotConfigured =
-    semanticStatus !== null && semanticStatus.configured === false
+    !semanticStatusLoading &&
+    semanticStatus !== null &&
+    semanticStatus.configured === false
   const showSemanticIndexWarning =
+    !semanticStatusLoading &&
     semanticStatus !== null &&
     semanticStatus.configured === true &&
     semanticStatus.index_ready === false &&
     Boolean((semanticStatus.detail ?? "").trim())
+  const showSemanticWarming =
+    !semanticStatusLoading &&
+    semanticStatus !== null &&
+    semanticStatus.configured === true &&
+    semanticStatus.index_ready === false &&
+    !showSemanticIndexWarning
 
   return (
     <div className="space-y-6">
@@ -449,6 +510,11 @@ export function RecordingsHistory() {
           {showSemanticIndexWarning && (
             <p className="text-xs text-amber-200/85" role="status">
               {semanticStatus!.detail}
+            </p>
+          )}
+          {showSemanticWarming && (
+            <p className="text-xs text-muted-foreground" role="status">
+              Semantic search index is still starting on the server…
             </p>
           )}
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
