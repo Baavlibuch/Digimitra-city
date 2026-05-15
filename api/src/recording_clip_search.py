@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from typing import Any, List, Optional, Tuple
 
+from shared.clip_sentence_transformer import load_clip_sentence_transformer
 from shared.recording_clip_milvus import (
     RECORDING_CLIP_COLLECTION,
     RECORDING_CLIP_INDEX_TYPE,
@@ -23,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 _text_model: Any = None
 _text_model_name: Optional[str] = None
+_text_model_lock = threading.Lock()
 _collection_cache: Any = None
 
 
@@ -67,13 +70,21 @@ def warmup_recording_clip_milvus() -> None:
 def _get_text_model():
     global _text_model, _text_model_name
     name = os.environ.get("CLIP_MODEL_NAME", "sentence-transformers/clip-ViT-B-32").strip()
-    if _text_model is None or _text_model_name != name:
-        from sentence_transformers import SentenceTransformer
-
-        logger.info("Loading CLIP model for semantic search API: %s (CPU)", name)
-        _text_model = SentenceTransformer(name, device="cpu")
-        _text_model_name = name
+    if _text_model is not None and _text_model_name == name:
+        return _text_model
+    with _text_model_lock:
+        if _text_model is None or _text_model_name != name:
+            logger.info("Loading CLIP model for semantic search API: %s (CPU)", name)
+            _text_model = load_clip_sentence_transformer(name)
+            _text_model_name = name
     return _text_model
+
+
+def _reset_text_model() -> None:
+    global _text_model, _text_model_name
+    with _text_model_lock:
+        _text_model = None
+        _text_model_name = None
 
 
 def get_recording_clip_collection_cached():
@@ -200,18 +211,24 @@ def run_semantic_search(
     if not q:
         return [], True, "Query is empty."
 
-    try:
-        model = _get_text_model()
-        qv = model.encode(
-            [q],
-            convert_to_numpy=True,
-            normalize_embeddings=True,
-            show_progress_bar=False,
-        )[0]
-        vec = qv.astype("float32").tolist()
-        cam = (camera_id or "").strip() or None
-        hits = search_recording_clip(col, vec, top_k=top_k, camera_id=cam)
-        return hits, True, None
-    except Exception as e:
-        logger.exception("semantic search failed")
-        return [], True, str(e)[:500]
+    for attempt in range(2):
+        try:
+            model = _get_text_model()
+            qv = model.encode(
+                [q],
+                convert_to_numpy=True,
+                normalize_embeddings=True,
+                show_progress_bar=False,
+            )[0]
+            vec = qv.astype("float32").tolist()
+            cam = (camera_id or "").strip() or None
+            hits = search_recording_clip(col, vec, top_k=top_k, camera_id=cam)
+            return hits, True, None
+        except Exception as e:
+            err = str(e)
+            if attempt == 0 and "meta tensor" in err.lower():
+                logger.warning("semantic search meta-tensor error; reloading CLIP model once: %s", err)
+                _reset_text_model()
+                continue
+            logger.exception("semantic search failed")
+            return [], True, err[:500]

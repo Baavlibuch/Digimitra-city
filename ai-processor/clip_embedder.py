@@ -4,23 +4,28 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from typing import Any, List, Optional
+
+from shared.clip_sentence_transformer import load_clip_sentence_transformer
 
 logger = logging.getLogger(__name__)
 
 _model = None
 _model_name: Optional[str] = None
+_model_lock = threading.Lock()
 
 
 def _get_model():
     global _model, _model_name
     name = os.environ.get("CLIP_MODEL_NAME", "sentence-transformers/clip-ViT-B-32").strip()
-    if _model is None or _model_name != name:
-        from sentence_transformers import SentenceTransformer
-
-        logger.info("Loading CLIP model %s (CPU)", name)
-        _model = SentenceTransformer(name, device="cpu")
-        _model_name = name
+    if _model is not None and _model_name == name:
+        return _model
+    with _model_lock:
+        if _model is None or _model_name != name:
+            logger.info("Loading CLIP model %s (CPU)", name)
+            _model = load_clip_sentence_transformer(name)
+            _model_name = name
     return _model
 
 
