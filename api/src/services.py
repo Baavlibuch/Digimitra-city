@@ -10,6 +10,7 @@ from fastapi import Depends
 from minio import Minio
 from pymilvus import MilvusClient
 
+from shared.recording_clip_milvus import milvus_sdk_http_uri
 from shared.models import Event, Camera
 from .database import get_db
 
@@ -52,24 +53,35 @@ class SurveillanceServices:
             sleep_s = float(os.environ.get("MILVUS_CONNECT_RETRY_SEC", "2.0"))
         except ValueError:
             sleep_s = 2.0
+        uri = milvus_sdk_http_uri(host, port)
+        logger.info(
+            "MilvusClient (legacy events index): resolved MILVUS_HOST=%s MILVUS_PORT=%s; using uri=%s",
+            host,
+            port,
+            uri,
+        )
         last_err: Optional[Exception] = None
         for attempt in range(1, max_attempts + 1):
             try:
-                client = MilvusClient(host=host, port=port)
+                # pymilvus MilvusClient only honors `uri`; host=/port= kwargs do not replace default localhost.
+                client = MilvusClient(uri=uri)
                 try:
                     client.list_collections()
                 except AttributeError:
                     client.has_collection("events")
                 self.milvus_client = client
-                if attempt > 1:
-                    logger.info("MilvusClient connected after %s attempt(s).", attempt)
+                if attempt == 1:
+                    logger.info("MilvusClient connected (legacy events index) uri=%s", uri)
+                else:
+                    logger.info("MilvusClient connected after %s attempt(s) uri=%s", attempt, uri)
                 return
             except Exception as e:
                 last_err = e
                 logger.warning(
-                    "MilvusClient connect attempt %s/%s failed for %s:%s: %s",
+                    "MilvusClient connect attempt %s/%s failed for uri=%s (gRPC host=%s port=%s): %s",
                     attempt,
                     max_attempts,
+                    uri,
                     host,
                     port,
                     e,
@@ -78,7 +90,7 @@ class SurveillanceServices:
                     time.sleep(sleep_s)
         self.milvus_client = None
         self.vector_search_enabled = False
-        logger.warning("MilvusClient unavailable after %s attempts: %s", max_attempts, last_err)
+        logger.warning("MilvusClient unavailable after %s attempts: %s (uri=%s)", max_attempts, last_err, uri)
 
     def initialize_services(self):
         """

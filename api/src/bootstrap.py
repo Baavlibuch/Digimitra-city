@@ -4,12 +4,14 @@ import boto3
 from botocore.exceptions import ClientError
 from pymilvus import connections, utility, FieldSchema, CollectionSchema, DataType, Collection
 
+from shared.minio_config import minio_bucket_name
+
 def create_minio_bucket():
     """Creates the MinIO bucket if it doesn't exist."""
     minio_endpoint = os.getenv("MINIO_ENDPOINT")
     minio_access_key = os.getenv("MINIO_ACCESS_KEY")
     minio_secret_key = os.getenv("MINIO_SECRET_KEY")
-    bucket_name = "mvp-bucket"
+    bucket_name = minio_bucket_name()
 
     s3_client = boto3.client(
         "s3",

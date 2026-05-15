@@ -20,8 +20,8 @@ class MilvusVectorService:
                  port: str = None,
                  collection_name: str = "surveillance_embeddings"):
         
-        self.host = host or os.environ.get("MILVUS_HOST", "localhost")
-        self.port = port or os.environ.get("MILVUS_PORT", "19530")
+        self.host = (host if host is not None else os.environ.get("MILVUS_HOST") or "").strip()
+        self.port = str(port if port is not None else os.environ.get("MILVUS_PORT", "19530")).strip()
         self.collection_name = collection_name
         self.logger = logging.getLogger("MilvusVectorService")
         
@@ -33,8 +33,15 @@ class MilvusVectorService:
         
         self.collection = None
         self.connection_alias = "default"
+
+        if not self.host:
+            self.logger.info(
+                "MILVUS_HOST not set; MilvusVectorService disabled (no implicit localhost for Docker networks)."
+            )
+            return
         
-        self._initialize_connection()
+        if not self._initialize_connection():
+            return
         self._initialize_collection()
     
     def _initialize_connection(self) -> bool:

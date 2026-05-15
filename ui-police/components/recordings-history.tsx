@@ -111,6 +111,9 @@ export function RecordingsHistory() {
   const [semanticHits, setSemanticHits] = useState<SemanticSearchHitDto[]>([])
   /** From GET /semantic-search/status; null = unknown (probe failed or not loaded yet). */
   const [semanticStatus, setSemanticStatus] = useState<SemanticSearchStatusDto | null>(null)
+  const [semanticStatusLoading, setSemanticStatusLoading] = useState(false)
+  /** User-facing probe failure (auth/network/etc.); never substitute for Milvus "not configured". */
+  const [semanticStatusFetchError, setSemanticStatusFetchError] = useState<string | null>(null)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const pendingSeekSecRef = useRef<number | null>(null)
 
@@ -123,6 +126,43 @@ export function RecordingsHistory() {
     objectTypeFilter,
   })
   filtersRef.current = { cameraFilter, startDate, startTime, endDate, endTime, objectTypeFilter }
+
+  const refreshSemanticStatus = useCallback(async (surveillanceAccessToken?: string | null) => {
+    setSemanticStatusLoading(true)
+    setSemanticStatusFetchError(null)
+    try {
+      const s = await fetchSemanticSearchStatus({
+        token: surveillanceAccessToken ?? undefined,
+      })
+      setSemanticStatus(s)
+      // Stale POST errors (e.g. prior `enabled: false` / Milvus detail) must not outlive a successful status probe.
+      setSemanticError(null)
+    } catch (e) {
+      setSemanticStatus(null)
+      const httpStatus =
+        typeof e === "object" && e !== null && "status" in e ? (e as { status: number }).status : undefined
+      const isNetwork =
+        typeof e === "object" && e !== null && "kind" in e && (e as { kind?: string }).kind === "network"
+      let message: string
+      if (httpStatus === 401 || httpStatus === 403) {
+        message =
+          "Could not load semantic search status: authentication was rejected (HTTP " +
+          String(httpStatus) +
+          "). Fix login or the API token — this is not the same as Milvus being unconfigured."
+      } else if (isNetwork) {
+        message =
+          "Could not reach the surveillance API for semantic search status (network). Retry when the API is up; search may still work once connected."
+      } else if (e instanceof Error) {
+        message = e.message
+      } else {
+        message = "Semantic search status could not be loaded."
+      }
+      setSemanticStatusFetchError(message)
+      console.warn("[recordings-history] semantic search status request failed:", e)
+    } finally {
+      setSemanticStatusLoading(false)
+    }
+  }, [])
 
   /**
    * Surveillance API JWT (same source as recordings list / playback).
@@ -166,6 +206,7 @@ export function RecordingsHistory() {
 
   const load = useCallback(async () => {
     setError(null)
+    setSemanticError(null)
     setLoading(true)
     surveillanceTokenRef.current = null
     const f = filtersRef.current
@@ -175,12 +216,7 @@ export function RecordingsHistory() {
       acquiredTok = tok
       surveillanceTokenRef.current = tok
       setToken(tok)
-      setSemanticStatus(null)
-      try {
-        setSemanticStatus(await fetchSemanticSearchStatus({ token: tok }))
-      } catch {
-        setSemanticStatus(null)
-      }
+      await refreshSemanticStatus(tok)
       const camList = await fetchCameras().catch(() => [])
       setCameras(camList)
 
@@ -219,11 +255,10 @@ export function RecordingsHistory() {
       setTotal(0)
       setDetRows([])
       setDetTotal(0)
-      setSemanticStatus(null)
     } finally {
       setLoading(false)
     }
-  }, [operator])
+  }, [operator, refreshSemanticStatus])
 
   useEffect(() => {
     if (isCheckingAuth) return
@@ -256,7 +291,7 @@ export function RecordingsHistory() {
       setSemanticError(loading ? "Connecting to surveillance API…" : "Not authenticated with surveillance API yet.")
       return
     }
-    if (semanticStatus && !semanticStatus.configured) {
+    if (semanticStatus !== null && semanticStatus.configured === false) {
       setSemanticError(semanticStatus.detail || "Semantic search is not available on this server.")
       return
     }
@@ -362,6 +397,14 @@ export function RecordingsHistory() {
     }
   }
 
+  const showSemanticNotConfigured =
+    semanticStatus !== null && semanticStatus.configured === false
+  const showSemanticIndexWarning =
+    semanticStatus !== null &&
+    semanticStatus.configured === true &&
+    semanticStatus.index_ready === false &&
+    Boolean((semanticStatus.detail ?? "").trim())
+
   return (
     <div className="space-y-6">
       <Card className="bg-card/50 backdrop-blur-sm border-slate-700/50">
@@ -376,12 +419,36 @@ export function RecordingsHistory() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
-          {semanticStatus && semanticStatus.detail && (!semanticStatus.configured || !semanticStatus.index_ready) && (
-            <p
-              className={`text-xs ${semanticStatus.configured ? "text-amber-200/85" : "text-muted-foreground"}`}
-              role="status"
-            >
-              {semanticStatus.detail}
+          {semanticStatusLoading && (
+            <p className="text-xs text-muted-foreground" role="status">
+              Checking semantic search capability on the server…
+            </p>
+          )}
+          {semanticStatusFetchError && (
+            <p className="text-xs text-amber-200/90 flex flex-wrap items-center gap-x-2 gap-y-1" role="alert">
+              <span>{semanticStatusFetchError}</span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-xs text-amber-100 hover:bg-amber-500/10"
+                disabled={semanticStatusLoading}
+                onClick={() => {
+                  void refreshSemanticStatus(getSurveillanceAccessTokenOrNull())
+                }}
+              >
+                Retry status
+              </Button>
+            </p>
+          )}
+          {showSemanticNotConfigured && (
+            <p className="text-xs text-muted-foreground" role="status">
+              {semanticStatus!.detail?.trim() || "Semantic search is not configured for this server."}
+            </p>
+          )}
+          {showSemanticIndexWarning && (
+            <p className="text-xs text-amber-200/85" role="status">
+              {semanticStatus!.detail}
             </p>
           )}
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
@@ -397,8 +464,9 @@ export function RecordingsHistory() {
               aria-label="Semantic search query"
               disabled={
                 semanticLoading ||
+                semanticStatusLoading ||
                 !getSurveillanceAccessTokenOrNull() ||
-                !!(semanticStatus && !semanticStatus.configured)
+                (semanticStatus !== null && semanticStatus.configured === false)
               }
             />
             <Button
@@ -408,8 +476,9 @@ export function RecordingsHistory() {
               className="h-10 shrink-0 border-amber-500/30 text-amber-200"
               disabled={
                 semanticLoading ||
+                semanticStatusLoading ||
                 !getSurveillanceAccessTokenOrNull() ||
-                !!(semanticStatus && !semanticStatus.configured)
+                (semanticStatus !== null && semanticStatus.configured === false)
               }
               onClick={() => void runSemanticSearch()}
             >

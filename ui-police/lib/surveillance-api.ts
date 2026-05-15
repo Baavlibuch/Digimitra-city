@@ -3,6 +3,8 @@
  * Used for browser MediaRecorder uploads to MinIO via POST /api/v1/recordings/upload.
  */
 
+import { getStoredAccessToken } from "@/src/lib/auth-token"
+
 const defaultBase = () =>
   (typeof process !== "undefined" && process.env.NEXT_PUBLIC_SURVEILLANCE_API_URL) || "http://127.0.0.1:8000"
 
@@ -261,16 +263,151 @@ export type SemanticSearchStatusDto = {
   detail?: string | null
 }
 
-export async function fetchSemanticSearchStatus(params: { token: string }): Promise<SemanticSearchStatusDto> {
-  const base = defaultBase().replace(/\/$/, "")
-  const res = await fetch(`${base}/api/v1/semantic-search/status`, {
-    headers: authHeader(params.token),
-  })
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(`Semantic search status failed (${res.status}): ${text.slice(0, 200)}`)
+/** Parse GET /semantic-search/status body — tolerates camelCase and string booleans from proxies. */
+export function coerceSemanticSearchStatusDto(raw: unknown): SemanticSearchStatusDto {
+  if (raw == null || typeof raw !== "object") {
+    throw new Error("Semantic search status: response was not a JSON object.")
   }
-  return (await res.json()) as SemanticSearchStatusDto
+  const r = raw as Record<string, unknown>
+  const pickBool = (v: unknown): boolean =>
+    v === true || v === 1 || v === "1" || v === "true" || v === "True"
+  const configured = pickBool(r.configured ?? r.Configured)
+  const index_ready = pickBool(r.index_ready ?? r.indexReady)
+  const d = r.detail
+  const detail =
+    d == null || d === "" ? null : typeof d === "string" ? d : String(d)
+  return { configured, index_ready, detail }
+}
+
+const SEMANTIC_STATUS_ATTEMPTS = 3
+const SEMANTIC_STATUS_BASE_DELAY_MS = 400
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms))
+}
+
+/**
+ * Bearer for GET /semantic-search/status — same strategy as recordings/detections:
+ * 1) explicit surveillance JWT from `fetchSurveillanceAccessToken` (preferred when passed), else
+ * 2) Cognito access token via Amplify `getStoredAccessToken` (same helper as other authenticated calls).
+ */
+async function resolveSemanticSearchStatusBearer(explicitToken?: string): Promise<{ token: string; source: string }> {
+  const trimmed = explicitToken?.trim()
+  if (trimmed) {
+    return { token: trimmed, source: "surveillance_fetchSurveillanceAccessToken_same_as_recordings" }
+  }
+  let cognito: string | null = null
+  try {
+    cognito = await getStoredAccessToken()
+  } catch (e) {
+    console.warn("[semantic-search/status] getStoredAccessToken (Amplify) failed:", e)
+  }
+  const c = cognito?.trim()
+  if (c) {
+    return { token: c, source: "getStoredAccessToken_amplify_cognito" }
+  }
+  throw Object.assign(
+    new Error(
+      "Semantic search status requires a JWT — obtain the surveillance token (same as recordings) or sign in with Cognito.",
+    ),
+    { status: 401 },
+  )
+}
+
+/**
+ * GET semantic-search status — backend requires Bearer JWT (same as POST /semantic-search).
+ * Retries transient network/5xx failures. Throws Error with optional `status` (HTTP) or `kind: "network"`.
+ */
+export async function fetchSemanticSearchStatus(params?: {
+  token?: string
+  signal?: AbortSignal
+}): Promise<SemanticSearchStatusDto> {
+  const base = defaultBase().replace(/\/$/, "")
+  const url = `${base}/api/v1/semantic-search/status`
+  const { token: tok } = await resolveSemanticSearchStatusBearer(params?.token)
+
+  const headers: Record<string, string> = { Authorization: `Bearer ${tok}` }
+
+  let lastStatus: number | undefined
+
+  for (let attempt = 1; attempt <= SEMANTIC_STATUS_ATTEMPTS; attempt++) {
+    try {
+      const res = await fetch(url, { headers, signal: params?.signal })
+      const text = await res.text()
+      lastStatus = res.status
+
+      if (res.ok) {
+        try {
+          const raw = JSON.parse(text) as unknown
+          return coerceSemanticSearchStatusDto(raw)
+        } catch (parseErr) {
+          console.warn("[semantic-search/status] invalid JSON:", text.slice(0, 400), parseErr)
+          const err = new Error("Semantic search status returned invalid JSON.") as Error & { status: number }
+          err.status = res.status
+          throw err
+        }
+      }
+
+      console.warn(
+        `[semantic-search/status] HTTP ${res.status} (attempt ${attempt}/${SEMANTIC_STATUS_ATTEMPTS}):`,
+        text.slice(0, 400),
+      )
+
+      if (res.status === 401 || res.status === 403) {
+        const err = new Error(
+          res.status === 401
+            ? "Not authenticated — semantic search status rejected credentials."
+            : "Access forbidden — semantic search status is not allowed for this identity.",
+        ) as Error & { status: number }
+        err.status = res.status
+        throw err
+      }
+
+      const retryable = res.status >= 500 || res.status === 429 || res.status === 408
+      if (retryable && attempt < SEMANTIC_STATUS_ATTEMPTS) {
+        await sleep(SEMANTIC_STATUS_BASE_DELAY_MS * attempt)
+        continue
+      }
+
+      const err = new Error(`Semantic search status failed (${res.status}): ${text.slice(0, 200)}`) as Error & {
+        status: number
+      }
+      err.status = res.status
+      throw err
+    } catch (e) {
+      if (params?.signal?.aborted) throw e
+
+      const httpStatus =
+        typeof e === "object" && e !== null && "status" in e ? (e as { status: number }).status : undefined
+      if (httpStatus === 401 || httpStatus === 403) throw e
+
+      const isNetworkish =
+        e instanceof TypeError ||
+        (e instanceof Error && (e.message === "Failed to fetch" || e.name === "AbortError"))
+
+      if (isNetworkish && !(e instanceof Error && e.name === "AbortError")) {
+        console.warn(
+          `[semantic-search/status] network error (attempt ${attempt}/${SEMANTIC_STATUS_ATTEMPTS}):`,
+          e,
+        )
+        if (attempt < SEMANTIC_STATUS_ATTEMPTS) {
+          await sleep(SEMANTIC_STATUS_BASE_DELAY_MS * attempt)
+          continue
+        }
+        const err = new Error(
+          "Cannot reach surveillance API for semantic search status (network error).",
+        ) as Error & { kind: "network" }
+        err.kind = "network"
+        throw err
+      }
+
+      throw e
+    }
+  }
+
+  const err = new Error(`Semantic search status failed (${lastStatus ?? "unknown"}).`) as Error & { status?: number }
+  if (lastStatus != null) err.status = lastStatus
+  throw err
 }
 
 export async function fetchSemanticSearch(params: {
@@ -294,6 +431,11 @@ export async function fetchSemanticSearch(params: {
   })
   if (!res.ok) {
     const text = await res.text()
+    if (res.status === 401 || res.status === 403) {
+      throw new Error(
+        `Semantic search failed: not authenticated (HTTP ${res.status}). Refresh the page or sign in again — this is not a Milvus configuration issue.`,
+      )
+    }
     throw new Error(`Semantic search failed (${res.status}): ${text.slice(0, 200)}`)
   }
   return (await res.json()) as SemanticSearchResponseDto

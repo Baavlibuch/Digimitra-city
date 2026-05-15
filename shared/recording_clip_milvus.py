@@ -44,43 +44,123 @@ def _notify_recording_clip_collection_dropped() -> None:
 def milvus_host_port_from_env() -> Tuple[Optional[str], int]:
     """Read Milvus gRPC endpoint from env (same vars as api / ai-processor compose).
 
-    Resolution order:
-    1. ``MILVUS_HOST`` + ``MILVUS_PORT`` (default port 19530)
+    Precedence (authoritative first):
+    1. ``MILVUS_HOST`` (non-empty after strip) + ``MILVUS_PORT`` (default 19530). When set, this wins;
+       empty/whitespace-only ``MILVUS_URI`` / ``MILVUS_ADDR`` / ``MILVUS_ENDPOINT`` never override it.
     2. ``MILVUS_URI`` / ``MILVUS_ADDR`` as ``host:port`` or ``grpc(s)://host:port`` / ``http(s)://host:port``
+    3. Kubernetes-style ``MILVUS_SERVICE_HOST`` / ``MILVUS_SERVICE_PORT``
+    4. ``MILVUS_ENDPOINT`` as ``host:port``
     """
-    host = (os.environ.get("MILVUS_HOST") or "").strip() or None
-    raw_port = os.environ.get("MILVUS_PORT", "19530")
+    raw_host = os.environ.get("MILVUS_HOST")
+    raw_port = os.environ.get("MILVUS_PORT")
+    raw_uri = os.environ.get("MILVUS_URI")
+    raw_addr = os.environ.get("MILVUS_ADDR")
+    raw_endpoint = os.environ.get("MILVUS_ENDPOINT")
+    raw_svc_host = os.environ.get("MILVUS_SERVICE_HOST")
 
-    if not host:
-        uri = (os.environ.get("MILVUS_URI") or os.environ.get("MILVUS_ADDR") or "").strip()
-        if uri:
-            try:
-                if "://" in uri:
-                    from urllib.parse import urlparse
+    logger.debug(
+        "milvus_host_port_from_env: raw MILVUS_HOST=%r MILVUS_PORT=%r MILVUS_URI=%r MILVUS_ADDR=%r "
+        "MILVUS_ENDPOINT=%r MILVUS_SERVICE_HOST=%r",
+        raw_host,
+        raw_port,
+        raw_uri,
+        raw_addr,
+        raw_endpoint,
+        raw_svc_host,
+    )
 
-                    parsed = urlparse(uri)
-                    if parsed.hostname:
-                        host = parsed.hostname.strip()
-                    if parsed.port:
-                        raw_port = str(parsed.port)
-                elif ":" in uri:
-                    h, p = uri.rsplit(":", 1)
-                    p = p.strip()
-                    if p.isdigit():
-                        host = (h or "").strip() or None
-                        raw_port = p
-                    else:
-                        host = uri.strip() or None
+    # --- 1) Authoritative: explicit host + port (Compose / standard deploys) ---
+    host_primary = (raw_host or "").strip()
+    if host_primary:
+        try:
+            port = int(str(raw_port if raw_port is not None else "19530").strip())
+        except ValueError:
+            port = 19530
+        if host_primary in ("localhost", "127.0.0.1") and os.path.isfile("/.dockerenv"):
+            logger.warning(
+                "Milvus host resolved to %s inside a container — use MILVUS_HOST=milvus (Compose service name), not loopback.",
+                host_primary,
+            )
+        logger.debug(
+            "milvus_host_port_from_env: resolved from MILVUS_HOST (authoritative) host=%r port=%s",
+            host_primary,
+            port,
+        )
+        logger.info(
+            "milvus_host_port_from_env: authoritative MILVUS_HOST=%r MILVUS_PORT=%r -> host=%r port=%s",
+            raw_host,
+            raw_port,
+            host_primary,
+            port,
+        )
+        return host_primary, port
+
+    # --- 2) URI / ADDR (only when MILVUS_HOST unset or whitespace-only) ---
+    host: Optional[str] = None
+    raw_port_out = raw_port if raw_port is not None else "19530"
+
+    uri = ((raw_uri or raw_addr or "") or "").strip()
+    if uri:
+        try:
+            if "://" in uri:
+                from urllib.parse import urlparse
+
+                parsed = urlparse(uri)
+                if parsed.hostname:
+                    host = parsed.hostname.strip()
+                if parsed.port:
+                    raw_port_out = str(parsed.port)
+            elif ":" in uri:
+                h, p = uri.rsplit(":", 1)
+                p = p.strip()
+                if p.isdigit():
+                    host = (h or "").strip() or None
+                    raw_port_out = p
                 else:
                     host = uri.strip() or None
-            except Exception:
-                host = None
+            else:
+                host = uri.strip() or None
+        except Exception:
+            host = None
 
+    # --- 3) Kubernetes service discovery ---
+    if not host:
+        svc_host = (raw_svc_host or "").strip() or None
+        if svc_host:
+            host = svc_host
+            svc_port = (os.environ.get("MILVUS_SERVICE_PORT") or "").strip()
+            if svc_port.isdigit():
+                raw_port_out = svc_port
+
+    # --- 4) MILVUS_ENDPOINT host:port ---
+    if not host:
+        endpoint = (raw_endpoint or "").strip()
+        if endpoint and ":" in endpoint:
+            try:
+                h, p = endpoint.rsplit(":", 1)
+                p = p.strip()
+                if p.isdigit():
+                    host = (h or "").strip() or None
+                    raw_port_out = p
+            except Exception:
+                pass
+
+    if host in ("localhost", "127.0.0.1") and os.path.isfile("/.dockerenv"):
+        logger.warning(
+            "Milvus host resolved to %s inside a container — use MILVUS_HOST=milvus (Compose service name), not loopback.",
+            host,
+        )
     try:
-        port = int(str(raw_port).strip())
+        port = int(str(raw_port_out).strip())
     except ValueError:
         port = 19530
+    logger.debug("milvus_host_port_from_env: resolved (fallback chain) host=%r port=%s", host, port)
     return host, port
+
+
+def milvus_sdk_http_uri(host: str, port: int) -> str:
+    """URI for ``pymilvus.MilvusClient`` (HTTP/gRPC gateway). That client ignores ``host=``/``port=`` kwargs and defaults to localhost."""
+    return f"http://{host.strip()}:{int(port)}"
 
 
 def _disconnect_recording_clip_alias() -> None:
@@ -183,6 +263,13 @@ def connect_recording_clip(
 
     last_err: Optional[Exception] = None
     for attempt in range(1, max_attempts + 1):
+        if attempt == 1:
+            logger.info(
+                "Milvus recording_clip: gRPC connection target host=%s port=%s (MilvusClient-style uri would be %s)",
+                host,
+                port,
+                milvus_sdk_http_uri(host, port),
+            )
         try:
             try:
                 connections.connect(
@@ -205,17 +292,25 @@ def connect_recording_clip(
         except Exception as e:
             last_err = e
             logger.warning(
-                "Milvus connect attempt %s/%s failed for %s:%s: %s",
+                "Milvus connect attempt %s/%s failed for gRPC %s:%s (MilvusClient uri=%s): %s",
                 attempt,
                 max_attempts,
                 host,
                 port,
+                milvus_sdk_http_uri(host, port),
                 e,
             )
         if attempt < max_attempts:
             time.sleep(sleep_s)
     if last_err:
-        logger.warning("Milvus connect failed for recording_clip after %s attempts: %s", max_attempts, last_err)
+        logger.warning(
+            "Milvus connect failed for recording_clip after %s attempts (gRPC %s:%s, MilvusClient uri=%s): %s",
+            max_attempts,
+            host,
+            port,
+            milvus_sdk_http_uri(host, port),
+            last_err,
+        )
     return False
 
 
@@ -330,9 +425,9 @@ def recording_clip_create_index_params() -> Dict[str, Any]:
     """
     Extra params for ``Collection.create_index`` on ``embedding``.
 
-    ``metric_type`` is always the literal ``\"IP\"`` (Milvus builds that only support L2/IP must not see COSINE).
+    Milvus 2.2.x supports L2 and IP only for this field type — use exactly FLAT + IP + empty params.
     """
-    return {"index_type": RECORDING_CLIP_INDEX_TYPE, "metric_type": "IP", "params": {}}
+    return {"index_type": "FLAT", "metric_type": "IP", "params": {}}
 
 
 def recording_clip_search_param() -> Dict[str, Any]:
@@ -443,9 +538,92 @@ def ensure_recording_clip_collection(host: Optional[str], port: Optional[int] = 
         col.load()
         logger.info("recording_clip_frames: semantic search enabled (collection loaded, IP + normalized CLIP space).")
         return col
-    except Exception as e:
-        logger.warning("ensure_recording_clip_collection failed: %s", e)
+    except Exception:
+        logger.exception(
+            "ensure_recording_clip_collection failed (gRPC target host=%s port=%s; MilvusClient uri=%s)",
+            host,
+            port,
+            milvus_sdk_http_uri(host, port),
+        )
         return None
+
+
+def validate_semantic_search_milvus_readiness(
+    *,
+    host: Optional[str] = None,
+    port: Optional[int] = None,
+    extra_bundle_retries: Optional[int] = None,
+    extra_bundle_sleep_sec: Optional[float] = None,
+) -> Tuple[bool, Optional[str]]:
+    """
+    Startup health: log resolved targets and index/search params, retry ``ensure_recording_clip_collection``
+    when Milvus is still booting. Never raises.
+    """
+    eh, ep = milvus_host_port_from_env()
+    h = ((host if host is not None else eh) or "").strip() or None
+    if not h:
+        logger.info("Semantic search Milvus readiness: Milvus host not configured; semantic index disabled.")
+        return False, "milvus_host_unset"
+    p = int(ep if port is None else port)
+
+    uri = milvus_sdk_http_uri(h, p)
+    cidx = recording_clip_create_index_params()
+    sp = recording_clip_search_param()
+    logger.info(
+        "Semantic search Milvus readiness: gRPC host=%s port=%s; MilvusClient uri=%s; create_index=%s; search_param=%s",
+        h,
+        p,
+        uri,
+        cidx,
+        sp,
+    )
+
+    tries = extra_bundle_retries
+    if tries is None:
+        try:
+            tries = max(1, int(os.environ.get("MILVUS_SEMANTIC_WARMUP_RETRIES", "3")))
+        except ValueError:
+            tries = 3
+    sleep_s = extra_bundle_sleep_sec
+    if sleep_s is None:
+        try:
+            sleep_s = float(os.environ.get("MILVUS_SEMANTIC_WARMUP_SLEEP_SEC", "2.0"))
+        except ValueError:
+            sleep_s = 2.0
+
+    last: Optional[str] = None
+    for attempt in range(1, tries + 1):
+        col = ensure_recording_clip_collection(h, p)
+        if col is not None:
+            logger.info(
+                "Semantic search Milvus readiness: OK (collection=%s, attempt %s/%s).",
+                RECORDING_CLIP_COLLECTION,
+                attempt,
+                tries,
+            )
+            return True, None
+        last = "ensure_recording_clip_collection_returned_none"
+        if attempt < tries:
+            logger.warning(
+                "Semantic search Milvus readiness: attempt %s/%s did not yield a ready collection; retrying in %ss (gRPC %s:%s, uri=%s)",
+                attempt,
+                tries,
+                sleep_s,
+                h,
+                p,
+                uri,
+            )
+            time.sleep(sleep_s)
+
+    logger.warning(
+        "Semantic search Milvus readiness: failed after %s attempts (%s; gRPC %s:%s, uri=%s)",
+        tries,
+        last,
+        h,
+        p,
+        uri,
+    )
+    return False, last
 
 
 def delete_vectors_for_segment(collection: Any, recording_segment_id: str) -> None:
@@ -524,6 +702,6 @@ def search_recording_clip(
                     }
                 )
         return out
-    except Exception as e:
-        logger.error("Milvus search_recording_clip failed: %s", e)
+    except Exception:
+        logger.exception("Milvus search_recording_clip failed")
         return []

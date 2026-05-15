@@ -13,7 +13,10 @@ from shared.recording_clip_milvus import (
     ensure_recording_clip_collection,
     milvus_host_port_from_env,
     recording_clip_collection_usable,
+    recording_clip_create_index_params,
+    recording_clip_search_param,
     search_recording_clip,
+    validate_semantic_search_milvus_readiness,
 )
 
 logger = logging.getLogger(__name__)
@@ -34,7 +37,15 @@ def warmup_recording_clip_milvus() -> None:
     if not host:
         logger.info("MILVUS_HOST not set; semantic recording_clip Milvus warmup skipped.")
         return
+    logger.info(
+        "Semantic search warmup: resolved Milvus host=%s port=%s; create_index params=%s; search params=%s",
+        host,
+        port,
+        recording_clip_create_index_params(),
+        recording_clip_search_param(),
+    )
     invalidate_recording_clip_collection_cache()
+    ok, detail = validate_semantic_search_milvus_readiness()
     col = get_recording_clip_collection_cached()
     if col:
         logger.info(
@@ -45,9 +56,11 @@ def warmup_recording_clip_milvus() -> None:
         )
     else:
         logger.warning(
-            "Milvus semantic index not available at %s:%s (will retry on first search).",
+            "Milvus semantic index not available at %s:%s (readiness_ok=%s detail=%s; will retry on first search).",
             host,
             port,
+            ok,
+            detail,
         )
 
 
@@ -89,29 +102,79 @@ def semantic_search_status() -> Tuple[bool, bool, Optional[str]]:
     """
     Returns (configured, index_ready, client_safe_detail).
 
-    * configured: this API process has a Milvus endpoint configured.
-    * index_ready: collection is loaded and searches can run.
+    * configured: a Milvus gRPC endpoint can be resolved for this process (env / service discovery).
+    * index_ready: ``recording_clip_frames`` matches the semantic-search contract and is loadable.
     * detail: optional user-facing message when not fully ready.
+
+    Uses the same readiness probe as API startup warmup (``validate_semantic_search_milvus_readiness``)
+    when the in-process collection cache is cold or stale, so HTTP status matches runtime init.
     """
     host, port = milvus_host_port_from_env()
-    if not host:
-        logger.info("semantic search status: Milvus host not set in environment for this API process")
-        return False, False, _MSG_NOT_CONFIGURED
-    col = get_recording_clip_collection_cached()
-    if col is None:
-        logger.debug(
-            "semantic search status: configured=true index_ready=false host=%s:%s (recording_clip_frames missing or not loadable).",
-            host,
-            port,
-        )
-        return True, False, _MSG_INDEX_UNAVAILABLE
-    logger.debug(
-        "semantic search status: configured=true index_ready=true host=%s:%s collection=%s.",
+    logger.info(
+        "semantic_search_status runtime: resolved_host=%r resolved_port=%r raw_env_host=%r raw_env_port=%r",
         host,
         port,
-        RECORDING_CLIP_COLLECTION,
+        os.getenv("MILVUS_HOST"),
+        os.getenv("MILVUS_PORT"),
     )
-    return True, True, None
+    if not host:
+        logger.warning(
+            "semantic_search_status: configured=false index_ready=false reason=no_milvus_endpoint "
+            "(set MILVUS_HOST, MILVUS_URI/MILVUS_ADDR, MILVUS_SERVICE_HOST, or MILVUS_ENDPOINT)",
+        )
+        return False, False, _MSG_NOT_CONFIGURED
+
+    col = get_recording_clip_collection_cached()
+    if col is not None and recording_clip_collection_usable(col):
+        logger.info(
+            "semantic_search_status: configured=true index_ready=true (cache hit) collection=%s",
+            RECORDING_CLIP_COLLECTION,
+        )
+        return True, True, None
+
+    readiness_ok, readiness_detail = validate_semantic_search_milvus_readiness(host=host, port=port)
+    logger.info(
+        "semantic_search_status: validate_semantic_search_milvus_readiness ok=%s detail=%r",
+        readiness_ok,
+        readiness_detail,
+    )
+
+    col = get_recording_clip_collection_cached()
+    usable = col is not None and recording_clip_collection_usable(col)
+    logger.info(
+        "semantic_search_status: post-readiness get_recording_clip_collection_cached is_none=%s usable=%s",
+        col is None,
+        usable,
+    )
+
+    if not usable and readiness_ok:
+        logger.warning(
+            "semantic_search_status: readiness_ok but API cache not usable; invalidating recording_clip cache once",
+        )
+        invalidate_recording_clip_collection_cache()
+        col = get_recording_clip_collection_cached()
+        usable = col is not None and recording_clip_collection_usable(col)
+        logger.info(
+            "semantic_search_status: after cache invalidation is_none=%s usable=%s",
+            col is None,
+            usable,
+        )
+
+    if usable:
+        logger.info(
+            "semantic_search_status: configured=true index_ready=true collection=%s",
+            RECORDING_CLIP_COLLECTION,
+        )
+        return True, True, None
+
+    logger.warning(
+        "semantic_search_status: configured=true index_ready=false readiness_ok=%s readiness_detail=%r "
+        "collection_is_none=%s",
+        readiness_ok,
+        readiness_detail,
+        col is None,
+    )
+    return True, False, _MSG_INDEX_UNAVAILABLE
 
 
 def run_semantic_search(

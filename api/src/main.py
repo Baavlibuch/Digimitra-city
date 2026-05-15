@@ -74,8 +74,8 @@ def startup_event():
         db.close()
     try:
         recording_clip_search.warmup_recording_clip_milvus()
-    except Exception as e:
-        logger.warning("Milvus semantic warmup skipped: %s", e)
+    except Exception:
+        logger.exception("Milvus semantic warmup failed with an unexpected error")
 
 
 @app.post("/api/v1/token", response_model=schemas.Token)
@@ -357,8 +357,20 @@ def get_recording(
 def get_semantic_search_status(
     current_user: User = Depends(auth.get_current_active_user),
 ):
-    """Whether semantic search can run in this API process; do not infer from client-side env."""
+    """Whether semantic search can run in this API process; requires same JWT as other /api/v1 routes."""
     configured, index_ready, detail = recording_clip_search.semantic_search_status()
+    logger.info(
+        "GET /api/v1/semantic-search/status: configured=%s index_ready=%s detail=%r (user=%s)",
+        configured,
+        index_ready,
+        detail,
+        getattr(current_user, "username", None),
+    )
+    if not configured or not index_ready:
+        logger.info(
+            "GET /api/v1/semantic-search/status: partial/disabled — see recording_clip_search.semantic_search_status logs "
+            "for host resolution, validate_semantic_search_milvus_readiness, and collection cache",
+        )
     return schemas.SemanticSearchStatusResponse(
         configured=configured,
         index_ready=index_ready,

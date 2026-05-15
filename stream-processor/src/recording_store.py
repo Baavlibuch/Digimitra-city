@@ -1,28 +1,38 @@
+"""
+PostgreSQL persistence for stream-processor Kafka consumers.
+"""
 import logging
 import os
 import uuid
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import Session, sessionmaker
 
+from shared.minio_config import minio_bucket_name
 from shared.models import Base, Event, RecordingSegment
 from shared.schema_compat import ensure_recording_schema
 
 logger = logging.getLogger(__name__)
 
+__all__ = ["RecordingStore"]
 
-def get_db() -> Session:
+
+def _engine():
     db_url = os.environ.get("DATABASE_URL")
-    engine = create_engine(db_url)
-    return sessionmaker(autocommit=False, autoflush=False, bind=engine)()
+    if not db_url:
+        raise RuntimeError("DATABASE_URL environment variable is required")
+    return create_engine(db_url, pool_pre_ping=True)
+
+
+def _session_factory():
+    return sessionmaker(autocommit=False, autoflush=False, bind=_engine())
 
 
 def create_tables() -> None:
-    db_url = os.environ.get("DATABASE_URL")
-    engine = create_engine(db_url)
+    engine = _engine()
     Base.metadata.create_all(bind=engine)
     ensure_recording_schema(engine)
 
@@ -40,14 +50,20 @@ def _parse_dt(value: Any) -> Optional[datetime]:
         return None
 
 
-class Database:
-    """Persistence for Redpanda consumers (events + recording chunk metadata)."""
+class RecordingStore:
+    """Persists Redpanda events and recording chunk metadata for offline AI scan."""
 
     def __init__(self) -> None:
         create_tables()
+        self._SessionLocal = _session_factory()
+
+    def verify_connection(self) -> None:
+        with _engine().connect() as conn:
+            conn.execute(text("SELECT 1"))
+        logger.info("Stream processor connected to PostgreSQL")
 
     def insert_event(self, message: Dict[str, Any]) -> None:
-        session: Session = get_db()
+        session: Session = self._SessionLocal()
         try:
             event_id = message.get("event_id") or str(uuid.uuid4())
             camera_id = message.get("camera_id")
@@ -74,6 +90,7 @@ class Database:
             )
             session.add(row)
             session.commit()
+            logger.info("Recording event persisted: event_id=%s camera=%s", event_id, camera_id)
         except IntegrityError:
             session.rollback()
             logger.debug("Duplicate event id, skipping: %s", message.get("event_id"))
@@ -85,7 +102,7 @@ class Database:
 
     def insert_recording_chunk(self, message: Dict[str, Any]) -> None:
         """Persist DVR segment from edge chunk pipeline (Kafka)."""
-        session: Session = get_db()
+        session: Session = self._SessionLocal()
         try:
             object_key = message.get("minio_key")
             camera_id = message.get("camera_id")
@@ -93,8 +110,9 @@ class Database:
                 logger.warning("Skipping chunk without minio_key/camera_id: %s", message)
                 return
 
-            bucket = message.get("bucket") or os.environ.get("CHUNKS_MINIO_BUCKET", "mvp-bucket")
+            bucket = message.get("bucket") or minio_bucket_name()
             chunk_id = message.get("chunk_id") or str(uuid.uuid4())
+            segment_id = str(uuid.uuid4())
             start = _parse_dt(message.get("start_time"))
             end = _parse_dt(message.get("end_time"))
             if not start:
@@ -123,7 +141,7 @@ class Database:
             extra = {k: v for k, v in message.items() if k not in ("minio_key", "camera_id", "bucket")}
 
             row = RecordingSegment(
-                id=str(uuid.uuid4()),
+                id=segment_id,
                 camera_id=camera_id,
                 recording_session_id=str(chunk_id),
                 bucket_name=bucket,
@@ -138,7 +156,12 @@ class Database:
             )
             session.add(row)
             session.commit()
-            logger.info("Stored recording segment for camera=%s key=%s", camera_id, object_key)
+            logger.info(
+                "Recording chunk stored; AI scan queued: segment_id=%s camera=%s key=%s",
+                segment_id,
+                camera_id,
+                object_key,
+            )
         except IntegrityError:
             session.rollback()
             logger.debug("Duplicate recording object, skipping: %s", message.get("minio_key"))

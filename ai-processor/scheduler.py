@@ -19,6 +19,7 @@ from shared.schema_compat import ensure_recording_schema
 
 from detector import run_detection
 from frame_extractor import iter_spaced_frames
+from shared.minio_config import minio_bucket_name
 from utils import download_object, env_bool, get_minio_client
 
 from shared.recording_clip_milvus import (
@@ -90,8 +91,16 @@ def process_next_segment(SessionLocal: sessionmaker) -> bool:
         db.commit()
 
         tmp_path: Optional[str] = None
+        detection_count = 0
         try:
             suf = _suffix_for_key(seg.object_key)
+            logger.info(
+                "AI scan segment=%s bucket=%s (configured=%s) object_key=%s",
+                seg.id,
+                seg.bucket_name,
+                minio_bucket_name(),
+                seg.object_key,
+            )
             tmp_path = download_object(client, seg.bucket_name, seg.object_key, suffix=suf)
 
             interval = float(os.environ.get("AI_FRAME_INTERVAL_SEC", "3"))
@@ -100,6 +109,8 @@ def process_next_segment(SessionLocal: sessionmaker) -> bool:
             db.query(RecordingDetection).filter(RecordingDetection.recording_segment_id == seg.id).delete(
                 synchronize_session=False
             )
+
+            logger.info("YOLO processing started segment=%s", seg.id)
 
             clip_rows = []
             clip_collection = None
@@ -127,6 +138,7 @@ def process_next_segment(SessionLocal: sessionmaker) -> bool:
                             bounding_box=d.bounding_box,
                         )
                     )
+                    detection_count += 1
                 if clip_collection and frame_idx % clip_stride == 0:
                     try:
                         from clip_embedder import encode_image_bgr
@@ -155,7 +167,11 @@ def process_next_segment(SessionLocal: sessionmaker) -> bool:
             seg.ai_scan_completed_at = datetime.utcnow()
             seg.ai_scan_last_error = None
             db.commit()
-            logger.info("AI scan completed segment=%s", seg.id)
+            logger.info(
+                "AI scan completed segment=%s detections_inserted=%s",
+                seg.id,
+                detection_count,
+            )
             return True
         except Exception as e:
             logger.exception("AI scan failed segment=%s", seg.id)
@@ -180,7 +196,11 @@ def run_forever() -> None:
     idle = float(os.environ.get("AI_IDLE_POLL_SEC", "8"))
     delay = float(os.environ.get("AI_DELAY_AFTER_SEGMENT_SEC", "2"))
 
-    logger.info("AI processor started (sequential queue). idle_poll=%ss", idle)
+    logger.info(
+        "AI processor started (sequential queue). idle_poll=%ss minio_bucket=%s",
+        idle,
+        minio_bucket_name(),
+    )
 
     while True:
         if env_bool("AI_PROCESSOR_PAUSED", False):

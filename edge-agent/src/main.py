@@ -15,6 +15,8 @@ from minio import Minio
 from pymilvus import MilvusClient
 import json
 
+from shared.minio_config import minio_bucket_name
+
 # --- Configuration ---
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -56,7 +58,8 @@ def get_minio_client():
     )
 
 def get_milvus_client():
-    return MilvusClient(host=MILVUS_HOST, port=MILVUS_PORT)
+    # MilvusClient uses `uri` only; host=/port= leave the default http://localhost:19530.
+    return MilvusClient(uri=f"http://{MILVUS_HOST}:{MILVUS_PORT}")
 
 # --- Main Application Logic ---
 
@@ -139,7 +142,7 @@ def process_camera_feed(camera_id: str, video_file: str):
         
         if frames_in_chunk > 0 and detected_in_chunk:
             try:
-                minio_client.fput_object("mvp-bucket", chunk_path, chunk_path)
+                minio_client.fput_object(minio_bucket_name(), chunk_path, chunk_path)
                 file_size = None
                 try:
                     file_size = os.path.getsize(chunk_path)
@@ -151,7 +154,7 @@ def process_camera_feed(camera_id: str, video_file: str):
                     "start_time": chunk_start_time.isoformat(),
                     "end_time": datetime.now().isoformat(),
                     "minio_key": chunk_path,
-                    "bucket": "mvp-bucket",
+                    "bucket": minio_bucket_name(),
                     "file_size_bytes": file_size,
                 }
                 redpanda_producer.send(CHUNKS_TOPIC, chunk_data)
@@ -171,9 +174,10 @@ if __name__ == "__main__":
     
     try:
         minio_client = get_minio_client()
-        if not minio_client.bucket_exists("mvp-bucket"):
-            minio_client.make_bucket("mvp-bucket")
-            logger.info("Created MinIO bucket: mvp-bucket")
+        bucket = minio_bucket_name()
+        if not minio_client.bucket_exists(bucket):
+            minio_client.make_bucket(bucket)
+            logger.info("Created MinIO bucket: %s", bucket)
     except Exception as e:
         logger.error(f"Could not create MinIO bucket: {e}")
 

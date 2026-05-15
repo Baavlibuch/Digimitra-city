@@ -6,6 +6,8 @@ from pymilvus import connections, Collection
 import json
 import logging
 
+from shared.minio_config import minio_bucket_name
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -39,7 +41,7 @@ class MinioClient:
             aws_access_key_id=os.getenv('MINIO_ACCESS_KEY'),
             aws_secret_access_key=os.getenv('MINIO_SECRET_KEY')
         )
-        self.bucket_name = "mvp-bucket"
+        self.bucket_name = minio_bucket_name()
 
     def upload_file(self, file_path, object_name):
         try:

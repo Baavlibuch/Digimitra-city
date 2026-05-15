@@ -11,6 +11,8 @@ from minio import Minio
 from minio.error import S3Error
 import logging
 
+from shared.minio_config import minio_bucket_name
+
 class MinIOStorageService:
     """OOP service for MinIO object storage operations"""
     
@@ -18,13 +20,13 @@ class MinIOStorageService:
                  endpoint: str = None,
                  access_key: str = None,
                  secret_key: str = None,
-                 bucket_name: str = "surveillance-bucket",
+                 bucket_name: str = None,
                  secure: bool = False):
         
         self.endpoint = endpoint or os.environ.get("MINIO_ENDPOINT", "localhost:9000")
         self.access_key = access_key or os.environ.get("MINIO_ACCESS_KEY", "minioadmin")
         self.secret_key = secret_key or os.environ.get("MINIO_SECRET_KEY", "minioadmin")
-        self.bucket_name = bucket_name
+        self.bucket_name = bucket_name or minio_bucket_name()
         self.secure = secure
         
         self.logger = logging.getLogger("MinIOStorageService")
