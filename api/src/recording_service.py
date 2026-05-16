@@ -4,6 +4,7 @@ Designed so future AI pipelines can attach rows referencing `RecordingSegment.id
 """
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -12,6 +13,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from shared.models import RecordingSegment
+
+logger = logging.getLogger(__name__)
 
 
 def _naive_utc(dt: datetime) -> datetime:
@@ -68,6 +71,82 @@ def register_segment(
 
 def get_segment_by_id(db: Session, segment_id: str) -> Optional[RecordingSegment]:
     return db.query(RecordingSegment).filter(RecordingSegment.id == segment_id).first()
+
+
+def count_segments_pending_ai_index(db: Session) -> int:
+    """Segments registered in PostgreSQL but not yet finished by the AI worker (CLIP + YOLO)."""
+    return (
+        db.query(RecordingSegment)
+        .filter(RecordingSegment.ai_scan_completed_at.is_(None))
+        .count()
+    )
+
+
+def filter_valid_semantic_hits(db: Session, hits: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Drop Milvus hits whose recording_segment_id is missing or no longer in PostgreSQL.
+
+    Preserves Milvus ranking order for surviving hits. Logs skipped stale/orphan ids.
+    """
+    if not hits:
+        return []
+
+    ordered_ids: List[str] = []
+    seen: set[str] = set()
+    for h in hits:
+        rid = h.get("recording_segment_id")
+        if not rid:
+            continue
+        sid = str(rid)
+        if sid not in seen:
+            seen.add(sid)
+            ordered_ids.append(sid)
+
+    if not ordered_ids:
+        for h in hits:
+            logger.info(
+                "semantic search: skipping hit without recording_segment_id (vector_id=%r)",
+                h.get("id"),
+            )
+        return []
+
+    rows = (
+        db.query(RecordingSegment.id, RecordingSegment.bucket_name, RecordingSegment.object_key)
+        .filter(RecordingSegment.id.in_(ordered_ids))
+        .all()
+    )
+    playable_ids = {
+        str(row[0])
+        for row in rows
+        if row[0] and (row[1] or "").strip() and (row[2] or "").strip()
+    }
+    missing_ids = set(ordered_ids) - {str(row[0]) for row in rows if row[0]}
+    incomplete_ids = {str(row[0]) for row in rows if row[0]} - playable_ids
+
+    out: List[Dict[str, Any]] = []
+    for h in hits:
+        rid = h.get("recording_segment_id")
+        if not rid:
+            logger.info(
+                "semantic search: skipping hit without recording_segment_id (vector_id=%r)",
+                h.get("id"),
+            )
+            continue
+        sid = str(rid)
+        if sid in missing_ids:
+            logger.info(
+                "semantic search: skipping stale orphan segment_id=%r (not in recording_segments)",
+                sid,
+            )
+            continue
+        if sid in incomplete_ids:
+            logger.info(
+                "semantic search: skipping segment_id=%r (recording row missing storage reference)",
+                sid,
+            )
+            continue
+        out.append(h)
+    return out
 
 
 def list_segments(

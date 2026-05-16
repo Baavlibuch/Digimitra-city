@@ -55,6 +55,8 @@ services:
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
+      # Required so presigned URLs signed for localhost:9000 validate from the browser.
+      MINIO_SERVER_URL: http://localhost:9000
       <<: *default-env
     volumes:
       - minio_data:/data
@@ -104,6 +106,7 @@ services:
       DATABASE_URL: postgresql+psycopg2://svc:svcpass@postgres:5432/eventsdb
       KAFKA_BOOTSTRAP: redpanda:9092
       MINIO_ENDPOINT: minio:9000
+      MINIO_PUBLIC_URL: http://localhost:9000
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
       MILVUS_HOST: milvus

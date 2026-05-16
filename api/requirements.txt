@@ -2,7 +2,8 @@ fastapi
 sqlalchemy
 psycopg2-binary
 minio
-pymilvus>=2.4.0,<2.6
+# Match Milvus 2.2.x server and ai-processor (pymilvus 2.4+ can break search output_fields parsing).
+pymilvus>=2.2.0,<2.4
 sentence-transformers>=2.2.0,<4
 torch>=2.0.0,<3
 passlib[bcrypt]

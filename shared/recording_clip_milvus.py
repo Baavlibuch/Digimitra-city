@@ -682,48 +682,157 @@ def insert_frame_embeddings(collection: Any, rows: List[Dict[str, Any]]) -> bool
         return False
 
 
+def _ensure_collection_loaded_for_search(collection: Any) -> None:
+    try:
+        collection.load()
+    except Exception as e:
+        logger.warning("recording_clip_frames: load() before search failed: %s", e)
+
+
+def _query_clip_metadata_by_ids(collection: Any, ids: List[str]) -> Dict[str, Dict[str, Any]]:
+    if not ids:
+        return {}
+    quoted = ", ".join(f'"{_milvus_escape_str(i)}"' for i in ids)
+    expr = f"id in [{quoted}]"
+    try:
+        rows = collection.query(
+            expr=expr,
+            output_fields=["recording_segment_id", "camera_id", "timestamp_offset_ms", "model_version"],
+        )
+    except Exception as e:
+        logger.warning("recording_clip_frames: metadata query by id failed: %s", e)
+        return {}
+    by_id: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        pk = _entity_field(row, "id")
+        if pk is not None:
+            by_id[str(pk)] = row if isinstance(row, dict) else row
+    return by_id
+
+
+def _hits_from_search_results(
+    results: Any,
+    *,
+    metadata_by_id: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for hits in results:
+        for hit in hits:
+            ent = hit.entity
+            meta = metadata_by_id.get(str(hit.id)) if metadata_by_id else None
+            rsid = _entity_field(ent, "recording_segment_id") or _entity_field(meta, "recording_segment_id")
+            cam = _entity_field(ent, "camera_id") or _entity_field(meta, "camera_id")
+            off = _entity_field(ent, "timestamp_offset_ms")
+            if off is None and meta is not None:
+                off = _entity_field(meta, "timestamp_offset_ms")
+            mv = _entity_field(ent, "model_version") or _entity_field(meta, "model_version")
+            raw = float(hit.distance)
+            similarity = _ip_raw_score_to_display_similarity(raw)
+            out.append(
+                {
+                    "id": hit.id,
+                    "recording_segment_id": rsid,
+                    "camera_id": cam,
+                    "timestamp_offset_ms": int(off or 0),
+                    "model_version": mv,
+                    "similarity": similarity,
+                }
+            )
+    return out
+
+
+def _search_needs_scalar_fallback(exc: BaseException) -> bool:
+    msg = str(exc).lower()
+    return "unsupported field type" in msg or "hybridhits" in msg
+
+
 def search_recording_clip(
     collection: Any,
     query_embedding: List[float],
     *,
     top_k: int = 20,
     camera_id: Optional[str] = None,
-) -> List[Dict[str, Any]]:
+    query_text: Optional[str] = None,
+) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+    """
+    Vector search over ``recording_clip_frames``.
+
+    Returns ``(hits, error_message)``. On Milvus/pymilvus scalar parse failures, retries without
+    ``output_fields`` and loads metadata via ``query`` (Milvus 2.2.x + pymilvus 2.4+ compatibility).
+    """
     if len(query_embedding) != EMBEDDING_DIM:
-        return []
+        logger.warning(
+            "search_recording_clip: embedding dim %s != %s",
+            len(query_embedding),
+            EMBEDDING_DIM,
+        )
+        return [], f"Query embedding dimension mismatch (expected {EMBEDDING_DIM})."
+
     qv = _l2_normalize_embedding_list(query_embedding)
     expr = f'camera_id == "{_milvus_escape_str(camera_id)}"' if camera_id else None
     search_params = recording_clip_search_param()
-    out: List[Dict[str, Any]] = []
+    entities_before = getattr(collection, "num_entities", None)
+    _ensure_collection_loaded_for_search(collection)
+    logger.info(
+        "search_recording_clip: collection=%s entities=%s top_k=%s camera_id=%r query_text=%r",
+        RECORDING_CLIP_COLLECTION,
+        entities_before,
+        top_k,
+        camera_id,
+        (query_text or "")[:120],
+    )
+
+    scalar_fields = ["recording_segment_id", "camera_id", "timestamp_offset_ms", "model_version"]
+    limit = int(top_k)
+
     try:
         results = collection.search(
             data=[qv],
             anns_field="embedding",
             param=search_params,
-            limit=int(top_k),
+            limit=limit,
             expr=expr,
-            output_fields=["recording_segment_id", "camera_id", "timestamp_offset_ms", "model_version"],
+            output_fields=scalar_fields,
         )
-        for hits in results:
-            for hit in hits:
-                ent = hit.entity
-                rsid = _entity_field(ent, "recording_segment_id")
-                cam = _entity_field(ent, "camera_id")
-                off = _entity_field(ent, "timestamp_offset_ms")
-                mv = _entity_field(ent, "model_version")
-                raw = float(hit.distance)
-                similarity = _ip_raw_score_to_display_similarity(raw)
-                out.append(
-                    {
-                        "id": hit.id,
-                        "recording_segment_id": rsid,
-                        "camera_id": cam,
-                        "timestamp_offset_ms": int(off or 0),
-                        "model_version": mv,
-                        "similarity": similarity,
-                    }
-                )
-        return out
-    except Exception:
-        logger.exception("Milvus search_recording_clip failed")
-        return []
+        out = _hits_from_search_results(results)
+        if out:
+            logger.info(
+                "search_recording_clip: ok hits=%s top_distances=%s",
+                len(out),
+                [round(h["similarity"], 4) for h in out[:5]],
+            )
+        else:
+            logger.info("search_recording_clip: ok hits=0 (empty index or expr filtered all)")
+        return out, None
+    except Exception as e:
+        if not _search_needs_scalar_fallback(e):
+            logger.exception("Milvus search_recording_clip failed")
+            return [], str(e)[:500]
+
+        logger.warning(
+            "search_recording_clip: scalar output_fields failed (%s); retrying id-only search + query",
+            e,
+        )
+        try:
+            results = collection.search(
+                data=[qv],
+                anns_field="embedding",
+                param=search_params,
+                limit=limit,
+                expr=expr,
+            )
+            ids: List[str] = []
+            for hits in results:
+                for hit in hits:
+                    ids.append(str(hit.id))
+            metadata_by_id = _query_clip_metadata_by_ids(collection, ids)
+            out = _hits_from_search_results(results, metadata_by_id=metadata_by_id)
+            logger.info(
+                "search_recording_clip: fallback ok hits=%s top_distances=%s",
+                len(out),
+                [round(h["similarity"], 4) for h in out[:5]],
+            )
+            return out, None
+        except Exception as e2:
+            logger.exception("Milvus search_recording_clip fallback failed")
+            return [], str(e2)[:500]

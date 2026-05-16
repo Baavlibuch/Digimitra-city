@@ -11,7 +11,12 @@ from minio import Minio
 from minio.error import S3Error
 import logging
 
-from shared.minio_config import minio_bucket_name
+from shared.minio_config import (
+    minio_bucket_name,
+    minio_endpoint,
+    minio_public_endpoint_and_secure,
+    minio_region,
+)
 
 class MinIOStorageService:
     """OOP service for MinIO object storage operations"""
@@ -23,15 +28,18 @@ class MinIOStorageService:
                  bucket_name: str = None,
                  secure: bool = False):
         
-        self.endpoint = endpoint or os.environ.get("MINIO_ENDPOINT", "localhost:9000")
+        self.endpoint = endpoint or minio_endpoint()
         self.access_key = access_key or os.environ.get("MINIO_ACCESS_KEY", "minioadmin")
         self.secret_key = secret_key or os.environ.get("MINIO_SECRET_KEY", "minioadmin")
         self.bucket_name = bucket_name or minio_bucket_name()
         self.secure = secure
-        
+
         self.logger = logging.getLogger("MinIOStorageService")
         self.client = None
-        
+        self._presign_client = None
+        self._presign_endpoint = None
+        self._presign_secure = None
+
         self._initialize_client()
     
     def _initialize_client(self) -> bool:
@@ -41,9 +49,12 @@ class MinIOStorageService:
                 self.endpoint,
                 access_key=self.access_key,
                 secret_key=self.secret_key,
-                secure=self.secure
+                secure=self.secure,
+                region=minio_region(),
             )
-            
+
+            self._ensure_presign_client()
+
             # Test connection
             self.client.bucket_exists(self.bucket_name)
             
@@ -52,12 +63,41 @@ class MinIOStorageService:
                 self.client.make_bucket(self.bucket_name)
                 self.logger.info(f"Created bucket: {self.bucket_name}")
             
-            self.logger.info(f"MinIO client initialized: {self.endpoint}")
+            if self._presign_client is self.client:
+                self.logger.info("MinIO client initialized: %s", self.endpoint)
+            else:
+                self.logger.info(
+                    "MinIO client initialized: internal=%s presign=%s",
+                    self.endpoint,
+                    self._presign_endpoint,
+                )
             return True
             
         except Exception as e:
             self.logger.error(f"Failed to initialize MinIO client: {e}")
             return False
+
+    def _ensure_presign_client(self) -> None:
+        """Presign with the browser-reachable host (re-reads env; safe if config changes)."""
+        presign_endpoint, presign_secure = minio_public_endpoint_and_secure()
+        if (
+            self._presign_client is not None
+            and self._presign_endpoint == presign_endpoint
+            and self._presign_secure == presign_secure
+        ):
+            return
+        self._presign_endpoint = presign_endpoint
+        self._presign_secure = presign_secure
+        if presign_endpoint == self.endpoint and presign_secure == self.secure:
+            self._presign_client = self.client
+            return
+        self._presign_client = Minio(
+            presign_endpoint,
+            access_key=self.access_key,
+            secret_key=self.secret_key,
+            secure=presign_secure,
+            region=minio_region(),
+        )
     
     def upload_video_chunk(self, 
                           camera_id: str,
@@ -162,11 +202,13 @@ class MinIOStorageService:
 
         if not self.client:
             return None
+        self._ensure_presign_client()
+        presign_client = self._presign_client or self.client
 
         bucket = bucket_name or self.bucket_name
 
         try:
-            url = self.client.presigned_get_object(
+            url = presign_client.presigned_get_object(
                 bucket_name=bucket,
                 object_name=object_key,
                 expires=timedelta(hours=expiry_hours),

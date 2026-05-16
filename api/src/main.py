@@ -20,6 +20,7 @@ register_recording_clip_collection_dropped_hook(recording_clip_search.invalidate
 from .ai_service import AIService
 from .schemas import AIRequest
 from .storage_service import MinIOStorageService
+from shared.minio_config import minio_endpoint, minio_public_base_url, minio_public_endpoint_and_secure
 
 from shared.models import User, Event, RecordingDetection
 from shared.models import Camera as CameraModel
@@ -59,6 +60,13 @@ recording_storage = MinIOStorageService()
 
 @app.on_event("startup")
 def startup_event():
+    public_ep, _ = minio_public_endpoint_and_secure()
+    logger.info(
+        "MinIO: internal=%s public_base=%s presign_host=%s",
+        minio_endpoint(),
+        minio_public_base_url(),
+        public_ep,
+    )
     database.create_tables()
     db = database.SessionLocal()
     try:
@@ -381,12 +389,15 @@ def get_semantic_search_status(
 @app.post("/api/v1/semantic-search", response_model=schemas.SemanticSearchResponse)
 def semantic_search_recording_frames(
     body: schemas.SemanticSearchRequest,
+    db: Session = Depends(database.get_db),
     current_user: User = Depends(auth.get_current_active_user),
 ):
     top_k = max(1, min(50, int(body.top_k)))
+    # Over-fetch so filtering stale Milvus rows still yields up to top_k playable hits.
+    fetch_k = min(max(top_k * 5, top_k), 150)
     hits, enabled, err = recording_clip_search.run_semantic_search(
         body.query,
-        top_k=top_k,
+        top_k=fetch_k,
         camera_id=body.camera_id,
     )
     if not enabled:
@@ -397,6 +408,13 @@ def semantic_search_recording_frames(
         )
     if err:
         return schemas.SemanticSearchResponse(results=[], enabled=True, detail=err)
+    raw_hit_count = len(hits)
+    hits = recording_service.filter_valid_semantic_hits(db, hits)[:top_k]
+    if raw_hit_count and not hits:
+        logger.info(
+            "semantic search: %s Milvus hit(s) removed by PostgreSQL validity filter",
+            raw_hit_count,
+        )
     items: List[schemas.SemanticSearchHit] = []
     for h in hits:
         rid = h.get("recording_segment_id")
@@ -412,7 +430,17 @@ def semantic_search_recording_frames(
                 model_version=h.get("model_version"),
             )
         )
-    return schemas.SemanticSearchResponse(results=items, enabled=True, detail=None)
+    detail: Optional[str] = None
+    if not items:
+        pending = recording_service.count_segments_pending_ai_index(db)
+        if pending > 0:
+            detail = "AI indexing in progress..."
+        logger.info(
+            "semantic search: no playable results query=%r pending_ai_segments=%s",
+            (body.query or "")[:120],
+            pending,
+        )
+    return schemas.SemanticSearchResponse(results=items, enabled=True, detail=detail)
 
 
 @app.get("/api/v1/recordings/{recording_id}/playback", response_model=schemas.RecordingPlaybackResponse)
@@ -458,6 +486,7 @@ def delete_recording(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Could not delete object from storage",
         )
+    recording_clip_search.purge_segment_clip_vectors(row.id)
     db.delete(row)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -12,6 +12,7 @@ from shared.recording_clip_milvus import (
     RECORDING_CLIP_COLLECTION,
     RECORDING_CLIP_INDEX_TYPE,
     RECORDING_CLIP_METRIC_TYPE,
+    delete_vectors_for_segment,
     ensure_recording_clip_collection,
     milvus_host_port_from_env,
     recording_clip_collection_usable,
@@ -188,6 +189,22 @@ def semantic_search_status() -> Tuple[bool, bool, Optional[str]]:
     return True, False, _MSG_INDEX_UNAVAILABLE
 
 
+def purge_segment_clip_vectors(recording_segment_id: str) -> None:
+    """Best-effort: remove CLIP vectors for a deleted recording segment."""
+    segment_id = (recording_segment_id or "").strip()
+    if not segment_id:
+        return
+    col = get_recording_clip_collection_cached()
+    if col is None:
+        logger.warning(
+            "Milvus unavailable; could not purge recording_clip vectors for segment=%s",
+            segment_id,
+        )
+        return
+    delete_vectors_for_segment(col, segment_id)
+    logger.info("Purged recording_clip_frames vectors for deleted segment=%s", segment_id)
+
+
 def run_semantic_search(
     query: str,
     *,
@@ -222,7 +239,30 @@ def run_semantic_search(
             )[0]
             vec = qv.astype("float32").tolist()
             cam = (camera_id or "").strip() or None
-            hits = search_recording_clip(col, vec, top_k=top_k, camera_id=cam)
+            logger.info(
+                "semantic search: query=%r top_k=%s camera_id=%r collection_entities=%s",
+                q[:120],
+                top_k,
+                cam,
+                getattr(col, "num_entities", None),
+            )
+            hits, search_err = search_recording_clip(
+                col,
+                vec,
+                top_k=top_k,
+                camera_id=cam,
+                query_text=q,
+            )
+            if search_err:
+                logger.warning("semantic search: Milvus search error: %s", search_err)
+                if attempt == 0:
+                    invalidate_recording_clip_collection_cache()
+                    col = get_recording_clip_collection_cached()
+                    if col is None:
+                        return [], True, _MSG_INDEX_UNAVAILABLE
+                    continue
+                return [], True, search_err
+            logger.info("semantic search: raw_hits=%s", len(hits))
             return hits, True, None
         except Exception as e:
             err = str(e)

@@ -10,6 +10,7 @@ from fastapi import Depends
 from minio import Minio
 from pymilvus import MilvusClient
 
+from shared.minio_config import minio_endpoint, minio_public_base_url
 from shared.recording_clip_milvus import milvus_sdk_http_uri
 from shared.models import Event, Camera
 from .database import get_db
@@ -24,16 +25,16 @@ class SurveillanceServices:
         self.vector_search_enabled = False
         # Initialize MinIO client
         self.minio_client = Minio(
-            endpoint=os.environ.get("MINIO_ENDPOINT"),
+            endpoint=minio_endpoint(),
             access_key=os.environ.get("MINIO_ACCESS_KEY"),
             secret_key=os.environ.get("MINIO_SECRET_KEY"),
-            secure=False
+            secure=False,
         )
         # Initialize Milvus client
         self.milvus_client = None
         self._init_milvus_client()
-        # HLS base URL for playback
-        self.hls_base_url = f"http://{os.environ.get('MINIO_ENDPOINT')}/hls/"
+        # HLS base URL for browser playback (public MinIO URL when configured)
+        self.hls_base_url = f"{minio_public_base_url()}/hls/"
 
     def _init_milvus_client(self):
         host = (os.environ.get("MILVUS_HOST") or "").strip()
