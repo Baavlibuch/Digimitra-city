@@ -14,4 +14,3 @@ python-multipart
 uvicorn[standard]
 websockets
 wsproto
-y

@@ -96,18 +96,17 @@ class UserCreate(UserBase):
     role: str
 
 class User(UserBase):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     role: str
-
-    class Config:
-        orm_mode = True
 
 # --- Camera Schemas ---
 class CameraBase(BaseModel):
     name: str
     location: Optional[str] = None
     type: str = "surveillance"
-    source_type: Literal["webcam", "cctv"]
+    source_type: Literal["webcam", "cctv", "upload"]
     room_name: str
     stream_status: Literal["offline", "connecting", "online", "error"] = "offline"
     latitude: Optional[float] = None
@@ -122,11 +121,10 @@ class CameraCreate(CameraBase):
     channel: Optional[str] = None
 
 class Camera(CameraBase):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     created_at: datetime
-
-    class Config:
-        orm_mode = True
 
 
 class CameraUpdate(BaseModel):
