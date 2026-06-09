@@ -33,6 +33,10 @@ import {
   type SemanticSearchHitDto,
   type SemanticSearchStatusDto,
 } from "@/lib/surveillance-api"
+import {
+  RecordingPlaybackPlayer,
+  type PlaybackEntryContext,
+} from "@/components/recording-playback-player"
 
 function formatDt(iso: string | null | undefined) {
   if (!iso) return "—"
@@ -84,7 +88,12 @@ function combineLocalDateTimeToIso(dateStr: string, timeStr: string, edge: "star
   return new Date(ms).toISOString()
 }
 
-export function RecordingsHistory() {
+type RecordingsHistoryProps = {
+  /** When incremented by the file-upload feature, reloads catalog without changing filters. */
+  catalogRefreshTrigger?: number
+}
+
+export function RecordingsHistory({ catalogRefreshTrigger }: RecordingsHistoryProps = {}) {
   const { user, isCheckingAuth } = useAuth()
   const operator = (user?.username || "operator").trim() || "operator"
 
@@ -117,8 +126,11 @@ export function RecordingsHistory() {
   /** User-facing probe failure (auth/network/etc.); never substitute for Milvus "not configured". */
   const [semanticStatusFetchError, setSemanticStatusFetchError] = useState<string | null>(null)
   const semanticPollGenRef = useRef(0)
-  const videoRef = useRef<HTMLVideoElement | null>(null)
   const pendingSeekSecRef = useRef<number | null>(null)
+  const [playbackDetections, setPlaybackDetections] = useState<DetectionDto[]>([])
+  const [playbackDetectionsLoading, setPlaybackDetectionsLoading] = useState(false)
+  const [playbackEntryContext, setPlaybackEntryContext] = useState<PlaybackEntryContext>({ mode: "normal" })
+  const [activeSegmentStart, setActiveSegmentStart] = useState<string | null>(null)
 
   const filtersRef = useRef({
     cameraFilter,
@@ -317,7 +329,48 @@ export function RecordingsHistory() {
     void load()
   }, [load, isCheckingAuth])
 
-  const play = async (id: string) => {
+  const catalogRefreshSeenRef = useRef(0)
+  useEffect(() => {
+    if (catalogRefreshTrigger == null || catalogRefreshTrigger <= 0) return
+    if (catalogRefreshTrigger === catalogRefreshSeenRef.current) return
+    catalogRefreshSeenRef.current = catalogRefreshTrigger
+    void load()
+  }, [catalogRefreshTrigger, load])
+
+  const loadPlaybackDetections = useCallback(async (recordingId: string, token: string) => {
+    setPlaybackDetectionsLoading(true)
+    try {
+      const all: DetectionDto[] = []
+      let offset = 0
+      const pageSize = 200
+      let total = 0
+      do {
+        const page = await fetchDetections({
+          token,
+          recordingSegmentId: recordingId,
+          limit: pageSize,
+          offset,
+        })
+        total = page.total
+        all.push(...page.items)
+        offset += page.items.length
+        if (page.items.length === 0) break
+      } while (all.length < total && offset < 2000)
+      setPlaybackDetections(all)
+    } catch {
+      setPlaybackDetections([])
+    } finally {
+      setPlaybackDetectionsLoading(false)
+    }
+  }, [])
+
+  const openPlayback = async (
+    recordingId: string,
+    opts?: {
+      seekSec?: number | null
+      entryContext?: PlaybackEntryContext
+    },
+  ) => {
     const t = getSurveillanceAccessTokenOrNull()
     if (!t) {
       setError(loading ? "Connecting to surveillance API…" : "Not authenticated with surveillance API yet.")
@@ -325,16 +378,26 @@ export function RecordingsHistory() {
     }
     setError(null)
     try {
-      pendingSeekSecRef.current = null
-      const pb = await fetchRecordingPlaybackUrl(t, id, 2)
+      pendingSeekSecRef.current = opts?.seekSec ?? null
+      setPlaybackEntryContext(opts?.entryContext ?? { mode: "normal" })
+      const seg = rows.find((r) => r.id === recordingId)
+      setActiveSegmentStart(seg?.start_time ?? null)
+      const pb = await fetchRecordingPlaybackUrl(t, recordingId, 2)
       setPlaybackUrl(pb.url)
-      setActiveRecordingId(id)
+      setActiveRecordingId(recordingId)
+      void loadPlaybackDetections(recordingId, t)
     } catch (e) {
       setError(e instanceof Error ? e.message : "Playback failed.")
       setPlaybackUrl(null)
       setActiveRecordingId(null)
       pendingSeekSecRef.current = null
+      setPlaybackDetections([])
+      setPlaybackEntryContext({ mode: "normal" })
     }
+  }
+
+  const play = async (id: string) => {
+    await openPlayback(id, { seekSec: null, entryContext: { mode: "normal" } })
   }
 
   const runSemanticSearch = async () => {
@@ -382,24 +445,18 @@ export function RecordingsHistory() {
     }
   }
 
-  const playFromSemantic = async (recordingId: string, offsetMs: number) => {
-    const t = getSurveillanceAccessTokenOrNull()
-    if (!t) {
-      setError(loading ? "Connecting to surveillance API…" : "Not authenticated with surveillance API yet.")
-      return
-    }
-    setError(null)
-    try {
-      const pb = await fetchRecordingPlaybackUrl(t, recordingId, 2)
-      pendingSeekSecRef.current = offsetMs / 1000.0
-      setPlaybackUrl(pb.url)
-      setActiveRecordingId(recordingId)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Playback failed.")
-      setPlaybackUrl(null)
-      setActiveRecordingId(null)
-      pendingSeekSecRef.current = null
-    }
+  const playFromSemantic = async (hit: SemanticSearchHitDto) => {
+    await openPlayback(hit.recording_segment_id, {
+      seekSec: hit.timestamp_offset_ms / 1000.0,
+      entryContext: {
+        mode: "semantic",
+        evidence: {
+          query: semanticQuery.trim(),
+          similarity: hit.similarity,
+          offsetMs: hit.timestamp_offset_ms,
+        },
+      },
+    })
   }
 
   const playFromDetection = async (detectionId: string) => {
@@ -411,14 +468,21 @@ export function RecordingsHistory() {
     setError(null)
     try {
       const pb = await fetchDetectionPlaybackUrl(t, detectionId, 2)
-      pendingSeekSecRef.current = pb.timestamp_offset_ms / 1000.0
-      setPlaybackUrl(pb.url)
-      setActiveRecordingId(pb.recording_id)
+      await openPlayback(pb.recording_id, {
+        seekSec: pb.timestamp_offset_ms / 1000.0,
+        entryContext: {
+          mode: "detection",
+          detectionId: pb.detection_id,
+          offsetMs: pb.timestamp_offset_ms,
+        },
+      })
     } catch (e) {
       setError(e instanceof Error ? e.message : "Playback failed.")
       setPlaybackUrl(null)
       setActiveRecordingId(null)
       pendingSeekSecRef.current = null
+      setPlaybackDetections([])
+      setPlaybackEntryContext({ mode: "normal" })
     }
   }
 
@@ -439,6 +503,8 @@ export function RecordingsHistory() {
         setPlaybackUrl(null)
         setActiveRecordingId(null)
         pendingSeekSecRef.current = null
+        setPlaybackDetections([])
+        setPlaybackEntryContext({ mode: "normal" })
       }
       setRows((prev) => prev.filter((r) => r.id !== id))
       setTotal((n) => Math.max(0, n - 1))
@@ -574,7 +640,7 @@ export function RecordingsHistory() {
                       size="sm"
                       variant="outline"
                       className="shrink-0 border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/10"
-                      onClick={() => void playFromSemantic(h.recording_segment_id, h.timestamp_offset_ms)}
+                      onClick={() => void playFromSemantic(h)}
                     >
                       <Play className="h-3 w-3 mr-1" />
                       Play
@@ -756,27 +822,28 @@ export function RecordingsHistory() {
         </CardContent>
       </Card>
 
-      {playbackUrl && (
+      {playbackUrl && activeRecordingId && (
         <Card className="bg-slate-900/40 border-cyan-500/20">
           <CardHeader className="pb-2">
             <CardTitle className="text-base">Playback</CardTitle>
             <CardDescription className="text-xs">
-              Segment {activeRecordingId}. URL expires quickly; press Play on another row to refresh.
+              Segment {activeRecordingId}.
+              {playbackDetectionsLoading
+                ? " Loading detection data…"
+                : ` ${playbackDetections.length} detection(s) indexed (not shown on video).`}
+              URL expires quickly; press Play on another row to refresh.
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <video
-              ref={videoRef}
-              key={playbackUrl}
-              className="w-full max-h-[420px] rounded-md border border-slate-700 bg-black"
-              controls
-              src={playbackUrl}
-              onLoadedMetadata={(e) => {
-                const t = pendingSeekSecRef.current
-                if (t != null && Number.isFinite(t)) {
-                  e.currentTarget.currentTime = Math.max(0, t)
-                  pendingSeekSecRef.current = null
-                }
+            <RecordingPlaybackPlayer
+              playbackUrl={playbackUrl}
+              recordingId={activeRecordingId}
+              detections={playbackDetections}
+              pendingSeekSec={pendingSeekSecRef.current}
+              entryContext={playbackEntryContext}
+              segmentStartIso={activeSegmentStart}
+              onSeekApplied={() => {
+                pendingSeekSecRef.current = null
               }}
             />
           </CardContent>

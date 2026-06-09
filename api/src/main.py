@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 import logging
+import uuid
 from typing import List, Optional
 
 import inspect
@@ -12,7 +13,7 @@ from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import Session
 from starlette.requests import Request
 
-from . import services, database, auth, schemas, recording_service, detection_service, recording_clip_search
+from . import services, database, auth, schemas, recording_service, detection_service, recording_clip_search, video_file_upload
 from shared.recording_clip_milvus import register_recording_clip_collection_dropped_hook
 
 register_recording_clip_collection_dropped_hook(recording_clip_search.invalidate_recording_clip_collection_cache)
@@ -279,6 +280,106 @@ async def upload_browser_recording(
         recording_session_id=recording_session_id,
         bucket=recording_storage.bucket_name,
         segment_started_at=segment_started_at,
+        size_bytes=len(raw),
+    )
+
+
+@app.post("/api/v1/recordings/upload-file", response_model=schemas.RecordingUploadResponse)
+async def upload_video_file(
+    file: UploadFile = File(...),
+    camera_id: str = Form(...),
+    camera_name: Optional[str] = Form(None),
+    recording_session_id: Optional[str] = Form(None),
+    segment_started_at: Optional[str] = Form(None),
+    mime_type: Optional[str] = Form(None),
+    db: Session = Depends(database.get_db),
+    current_user: User = Depends(auth.get_current_active_user),
+):
+    """
+    Isolated upload path for user-selected video files (MP4, MOV, AVI, WebM).
+    Registers the same recording_segments row shape as other ingest paths so ai-processor picks it up.
+    """
+    if not recording_storage.client:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Object storage unavailable")
+
+    raw = await file.read()
+    if len(raw) == 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Empty upload body")
+
+    max_bytes = video_file_upload.max_upload_bytes()
+    if len(raw) > max_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File exceeds maximum upload size ({max_bytes} bytes)",
+        )
+
+    try:
+        ext, content_type = video_file_upload.resolve_video_content_type(mime_type, file.filename)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+
+    session_id = (recording_session_id or "").strip() or str(uuid.uuid4())
+    started_raw = (segment_started_at or "").strip() or datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+    try:
+        ts = datetime.fromisoformat(started_raw.replace("Z", "+00:00"))
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="segment_started_at must be ISO-8601")
+
+    original_filename = file.filename or f"upload{ext}"
+    meta = {
+        "recording_session_id": session_id,
+        "segment_started_at": started_raw,
+        "camera_name": camera_name or "",
+        "uploaded_by": current_user.username,
+        "original_filename": original_filename,
+        "source": video_file_upload.METADATA_SOURCE_FILE_UPLOAD,
+        "segment_index": "0",
+        "segment_window_ms": "",
+        "ingest_mode": video_file_upload.INGEST_MODE_FILE_UPLOAD,
+    }
+
+    object_key = recording_storage.upload_video_chunk(
+        camera_id=camera_id,
+        chunk_data=raw,
+        timestamp=ts,
+        metadata=meta,
+        file_extension=ext,
+        content_type=content_type,
+        segment_index=0,
+        recording_session_id=session_id,
+    )
+    if not object_key:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Upload to storage failed")
+
+    extra: dict = {
+        "segment_index": 0,
+        "ingest_mode": video_file_upload.INGEST_MODE_FILE_UPLOAD,
+        "camera_name": camera_name,
+        "original_filename": original_filename,
+    }
+
+    db_row = recording_service.register_segment(
+        db,
+        camera_id=camera_id,
+        recording_session_id=session_id,
+        bucket_name=recording_storage.bucket_name,
+        object_key=object_key,
+        start_time=ts,
+        end_time=None,
+        duration_seconds=None,
+        file_type=content_type,
+        size_bytes=len(raw),
+        ingest_source=video_file_upload.INGEST_SOURCE_FILE_UPLOAD,
+        extra=extra,
+    )
+
+    return schemas.RecordingUploadResponse(
+        recording_id=db_row.id if db_row else None,
+        object_key=object_key,
+        camera_id=camera_id,
+        recording_session_id=session_id,
+        bucket=recording_storage.bucket_name,
+        segment_started_at=started_raw,
         size_bytes=len(raw),
     )
 

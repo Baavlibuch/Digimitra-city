@@ -4,6 +4,8 @@ psycopg2-binary
 minio
 # Match Milvus 2.2.x server and ai-processor (pymilvus 2.4+ can break search output_fields parsing).
 pymilvus>=2.2.0,<2.4
+# pymilvus → environs expects marshmallow 3.x (__version_info__); torch/ST may pull 4.x
+marshmallow>=3.13.0,<4
 sentence-transformers>=2.2.0,<4
 torch>=2.0.0,<3
 passlib[bcrypt]
@@ -12,3 +14,4 @@ python-multipart
 uvicorn[standard]
 websockets
 wsproto
+y
