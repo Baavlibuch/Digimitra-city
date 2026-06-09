@@ -1,7 +1,8 @@
 "use client"
 
-import { useState } from "react"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useRouter } from "next/navigation"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -25,140 +26,348 @@ import {
   Send,
   Download,
   Pin,
+  RefreshCw,
 } from "lucide-react"
+import { useAuth } from "@/components/auth-provider"
+import {
+  fetchCameras,
+  fetchDetectionPlaybackUrl,
+  fetchDetections,
+  fetchRecordingPlaybackUrl,
+  fetchSurveillanceAccessToken,
+  type DetectionDto,
+} from "@/lib/surveillance-api"
+import { eventBannerLabel } from "@/lib/detection-overlay-utils"
+import {
+  RecordingPlaybackPlayer,
+  type PlaybackEntryContext,
+} from "@/components/recording-playback-player"
 
-interface Event {
+type EventSeverity = "medium" | "high" | "critical"
+
+interface DisplayEvent {
   id: string
+  detectionId: string
+  recordingSegmentId: string
   type: string
-  severity: "low" | "medium" | "high" | "critical"
+  severity: EventSeverity
   title: string
   description: string
   camera: string
   location: string
   timestamp: string
-  duration?: string
+  absoluteEventTime: string
   aiConfidence: number
-  status: "new" | "acknowledged" | "resolved"
-  clusterId?: string
-  relatedEvents?: number
+  status: "new"
 }
 
-interface EventCluster {
-  id: string
-  title: string
-  description: string
-  eventCount: number
-  severity: "low" | "medium" | "high" | "critical"
-  location: string
-  timeRange: string
-  events: Event[]
+/** Severity mapping lives only in this file — not shared utilities. */
+function severityFromLabel(label: string): EventSeverity | "low" {
+  switch (label) {
+    case "Accident Alert":
+      return "critical"
+    case "Possible Altercation":
+    case "Suspicious Activity":
+    case "Security Alert":
+      return "high"
+    case "Crowd Formation":
+    case "Traffic Congestion":
+    case "High Human Activity":
+    case "Vehicle Cluster Detected":
+      return "medium"
+    default:
+      return "low"
+  }
+}
+
+function groupDetectionsByFrame(detections: DetectionDto[]): DetectionDto[][] {
+  const map = new Map<string, DetectionDto[]>()
+  for (const d of detections) {
+    const key = `${d.recording_segment_id}:${d.timestamp_offset_ms}`
+    const group = map.get(key)
+    if (group) group.push(d)
+    else map.set(key, [d])
+  }
+  return Array.from(map.values())
+}
+
+function formatEventTime(iso: string): string {
+  try {
+    return new Date(iso).toLocaleString(undefined, {
+      dateStyle: "short",
+      timeStyle: "medium",
+    })
+  } catch {
+    return iso
+  }
+}
+
+function buildDescription(group: DetectionDto[]): string {
+  const types = [...new Set(group.map((d) => d.object_type))]
+  const typeList = types.join(", ")
+  return `${group.length} detection(s) at this moment — objects: ${typeList}`
+}
+
+function buildDisplayEvents(
+  detections: DetectionDto[],
+  cameraNameById: Map<string, string>,
+): DisplayEvent[] {
+  const events: DisplayEvent[] = []
+  for (const group of groupDetectionsByFrame(detections)) {
+    const label = eventBannerLabel(group)
+    if (!label) continue
+    const severity = severityFromLabel(label)
+    if (severity === "low") continue
+
+    const anchor = [...group].sort((a, b) => b.confidence - a.confidence)[0]
+    if (!anchor) continue
+
+    const cameraLabel = cameraNameById.get(anchor.camera_id) ?? anchor.camera_id
+
+    events.push({
+      id: anchor.id,
+      detectionId: anchor.id,
+      recordingSegmentId: anchor.recording_segment_id,
+      type: label,
+      severity,
+      title: label,
+      description: buildDescription(group),
+      camera: cameraLabel,
+      location: cameraLabel,
+      timestamp: formatEventTime(anchor.absolute_event_time),
+      absoluteEventTime: anchor.absolute_event_time,
+      aiConfidence: Math.max(...group.map((d) => d.confidence)),
+      status: "new",
+    })
+  }
+
+  return events.sort(
+    (a, b) => new Date(b.absoluteEventTime).getTime() - new Date(a.absoluteEventTime).getTime(),
+  )
+}
+
+function localYmd(d: Date) {
+  return d.toLocaleDateString("en-CA", { year: "numeric", month: "2-digit", day: "2-digit" })
+}
+
+function localHm(d: Date) {
+  const h = d.getHours()
+  const m = d.getMinutes()
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`
+}
+
+function combineLocalDateTimeToIso(dateStr: string, timeStr: string, edge: "start" | "end"): string | undefined {
+  const d = dateStr?.trim()
+  if (!d) return undefined
+  const t = timeStr?.trim()
+  let clock: string
+  if (t && t.length >= 4) {
+    clock = t.length === 5 ? `${t}:00` : t.length === 8 ? t : `${t.slice(0, 5)}:00`
+  } else {
+    clock = edge === "end" ? "23:59:59" : "00:00:00"
+  }
+  const ms = new Date(`${d}T${clock}`).getTime()
+  if (Number.isNaN(ms)) return undefined
+  return new Date(ms).toISOString()
 }
 
 export function EventsAlerts() {
+  const router = useRouter()
+  const { user, isCheckingAuth } = useAuth()
+  const operator = (user?.username || "operator").trim() || "operator"
+
   const [filter, setFilter] = useState("all")
   const [severityFilter, setSeverityFilter] = useState("all")
   const [searchQuery, setSearchQuery] = useState("")
-  const [selectedEvent, setSelectedEvent] = useState<Event | null>(null)
   const [viewMode, setViewMode] = useState<"timeline" | "clusters">("timeline")
   const [showActionMenu, setShowActionMenu] = useState<string | null>(null)
   const [actionFeedback, setActionFeedback] = useState<{ eventId: string; action: string; message: string } | null>(
     null,
   )
 
-  // Mock events data
-  const events: Event[] = [
-    {
-      id: "1",
-      type: "Motion Detection",
-      severity: "high",
-      title: "Suspicious Activity Detected",
-      description: "Person loitering near hospital entrance for extended period (12+ minutes)",
-      camera: "Camera 24",
-      location: "Hospital Main Entrance",
-      timestamp: "2 minutes ago",
-      duration: "12:34",
-      aiConfidence: 0.94,
-      status: "new",
-      clusterId: "cluster-1",
-      relatedEvents: 3,
-    },
-    {
-      id: "2",
-      type: "Unusual Behavior",
-      severity: "critical",
-      title: "Multiple Fights Detected",
-      description: "AI detected aggressive behavior and potential altercation",
-      camera: "Camera 12",
-      location: "Sector 7 - Parking Area",
-      timestamp: "5 minutes ago",
-      duration: "3:45",
-      aiConfidence: 0.89,
-      status: "new",
-      clusterId: "cluster-2",
-      relatedEvents: 2,
-    },
-    {
-      id: "3",
-      type: "Perimeter Breach",
-      severity: "high",
-      title: "Unauthorized Access Attempt",
-      description: "Person attempting to access restricted area after hours",
-      camera: "Camera 8",
-      location: "Emergency Exit B",
-      timestamp: "8 minutes ago",
-      aiConfidence: 0.91,
-      status: "acknowledged",
-    },
-    {
-      id: "4",
-      type: "Vehicle Alert",
-      severity: "medium",
-      title: "Speeding Vehicle Detected",
-      description: "Vehicle exceeding speed limit in hospital zone",
-      camera: "Camera 15",
-      location: "Hospital Driveway",
-      timestamp: "12 minutes ago",
-      aiConfidence: 0.87,
-      status: "resolved",
-    },
-    {
-      id: "5",
-      type: "Crowd Detection",
-      severity: "medium",
-      title: "Large Gathering Detected",
-      description: "Unusual crowd formation in normally quiet area",
-      camera: "Camera 6",
-      location: "Courtyard Area",
-      timestamp: "18 minutes ago",
-      aiConfidence: 0.82,
-      status: "acknowledged",
-      clusterId: "cluster-1",
-    },
-  ]
+  const [token, setToken] = useState<string | null>(null)
+  const surveillanceTokenRef = useRef<string | null>(null)
+  const [rawDetections, setRawDetections] = useState<DetectionDto[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [cameraNameById, setCameraNameById] = useState<Map<string, string>>(new Map())
 
-  // Mock clusters data
-  const clusters: EventCluster[] = [
-    {
-      id: "cluster-1",
-      title: "Suspicious Activity - Hospital Entrance",
-      description: "Multiple related incidents near main entrance area",
-      eventCount: 3,
-      severity: "high",
-      location: "Hospital Main Entrance Area",
-      timeRange: "Last 20 minutes",
-      events: events.filter((e) => e.clusterId === "cluster-1"),
+  const [playbackUrl, setPlaybackUrl] = useState<string | null>(null)
+  const [activeRecordingId, setActiveRecordingId] = useState<string | null>(null)
+  const pendingSeekSecRef = useRef<number | null>(null)
+  const [playbackDetections, setPlaybackDetections] = useState<DetectionDto[]>([])
+  const [playbackDetectionsLoading, setPlaybackDetectionsLoading] = useState(false)
+  const [playbackEntryContext, setPlaybackEntryContext] = useState<PlaybackEntryContext>({ mode: "normal" })
+  const [activeSegmentStart, setActiveSegmentStart] = useState<string | null>(null)
+  const [playbackLoadingId, setPlaybackLoadingId] = useState<string | null>(null)
+
+  const getSurveillanceAccessTokenOrNull = useCallback((): string | null => {
+    if (surveillanceTokenRef.current) return surveillanceTokenRef.current
+    if (loading) return null
+    return token
+  }, [loading, token])
+
+  const events = useMemo(
+    () => buildDisplayEvents(rawDetections, cameraNameById),
+    [rawDetections, cameraNameById],
+  )
+
+  const criticalCount = useMemo(() => events.filter((e) => e.severity === "critical").length, [events])
+  const highCount = useMemo(() => events.filter((e) => e.severity === "high").length, [events])
+  const mediumCount = useMemo(() => events.filter((e) => e.severity === "medium").length, [events])
+
+  const loadDetections = useCallback(async () => {
+    setError(null)
+    setLoading(true)
+    surveillanceTokenRef.current = null
+    let acquiredTok: string | null = null
+    try {
+      const tok = await fetchSurveillanceAccessToken(operator)
+      acquiredTok = tok
+      surveillanceTokenRef.current = tok
+      setToken(tok)
+
+      const camList = await fetchCameras().catch(() => [])
+      const nameMap = new Map<string, string>()
+      for (const c of camList) nameMap.set(c.id, c.name)
+      setCameraNameById(nameMap)
+
+      const end = new Date()
+      const start = new Date(end.getTime() - 7 * 24 * 60 * 60 * 1000)
+      const eventAfter = combineLocalDateTimeToIso(localYmd(start), localHm(start), "start")
+      const eventBefore = combineLocalDateTimeToIso(localYmd(end), localHm(end), "end")
+
+      const all: DetectionDto[] = []
+      let offset = 0
+      const pageSize = 200
+      let total = 0
+      do {
+        const page = await fetchDetections({
+          token: tok,
+          eventAfter,
+          eventBefore,
+          limit: pageSize,
+          offset,
+        })
+        total = page.total
+        all.push(...page.items)
+        offset += page.items.length
+        if (page.items.length === 0) break
+      } while (all.length < total && offset < 2000)
+
+      setRawDetections(all)
+    } catch (e) {
+      if (!acquiredTok) {
+        surveillanceTokenRef.current = null
+        setToken(null)
+      }
+      setError(e instanceof Error ? e.message : "Failed to load detections.")
+      setRawDetections([])
+    } finally {
+      setLoading(false)
+    }
+  }, [operator])
+
+  useEffect(() => {
+    if (isCheckingAuth) return
+    void loadDetections()
+  }, [loadDetections, isCheckingAuth])
+
+  const loadPlaybackDetections = useCallback(async (recordingId: string, tok: string) => {
+    setPlaybackDetectionsLoading(true)
+    try {
+      const all: DetectionDto[] = []
+      let offset = 0
+      const pageSize = 200
+      let total = 0
+      do {
+        const page = await fetchDetections({
+          token: tok,
+          recordingSegmentId: recordingId,
+          limit: pageSize,
+          offset,
+        })
+        total = page.total
+        all.push(...page.items)
+        offset += page.items.length
+        if (page.items.length === 0) break
+      } while (all.length < total && offset < 2000)
+      setPlaybackDetections(all)
+    } catch {
+      setPlaybackDetections([])
+    } finally {
+      setPlaybackDetectionsLoading(false)
+    }
+  }, [])
+
+  const openPlayback = useCallback(
+    async (
+      recordingId: string,
+      opts?: {
+        seekSec?: number | null
+        entryContext?: PlaybackEntryContext
+        segmentStartIso?: string | null
+      },
+    ) => {
+      const t = getSurveillanceAccessTokenOrNull()
+      if (!t) {
+        setError(loading ? "Connecting to surveillance API…" : "Not authenticated with surveillance API yet.")
+        return
+      }
+      setError(null)
+      try {
+        pendingSeekSecRef.current = opts?.seekSec ?? null
+        setPlaybackEntryContext(opts?.entryContext ?? { mode: "normal" })
+        setActiveSegmentStart(opts?.segmentStartIso ?? null)
+        const pb = await fetchRecordingPlaybackUrl(t, recordingId, 2)
+        setPlaybackUrl(pb.url)
+        setActiveRecordingId(recordingId)
+        void loadPlaybackDetections(recordingId, t)
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Playback failed.")
+        setPlaybackUrl(null)
+        setActiveRecordingId(null)
+        pendingSeekSecRef.current = null
+        setPlaybackDetections([])
+        setPlaybackEntryContext({ mode: "normal" })
+      }
     },
-    {
-      id: "cluster-2",
-      title: "Security Incidents - Sector 7",
-      description: "Escalating situation requiring immediate attention",
-      eventCount: 2,
-      severity: "critical",
-      location: "Sector 7 - Parking Area",
-      timeRange: "Last 10 minutes",
-      events: events.filter((e) => e.clusterId === "cluster-2"),
+    [getSurveillanceAccessTokenOrNull, loadPlaybackDetections, loading],
+  )
+
+  const playFromDetection = useCallback(
+    async (detectionId: string, segmentStartIso?: string | null) => {
+      const t = getSurveillanceAccessTokenOrNull()
+      if (!t) {
+        setError(loading ? "Connecting to surveillance API…" : "Not authenticated with surveillance API yet.")
+        return
+      }
+      setPlaybackLoadingId(detectionId)
+      setError(null)
+      try {
+        const pb = await fetchDetectionPlaybackUrl(t, detectionId, 2)
+        await openPlayback(pb.recording_id, {
+          seekSec: pb.timestamp_offset_ms / 1000.0,
+          entryContext: {
+            mode: "detection",
+            detectionId: pb.detection_id,
+            offsetMs: pb.timestamp_offset_ms,
+          },
+          segmentStartIso: segmentStartIso ?? pb.absolute_event_time,
+        })
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Playback failed.")
+        setPlaybackUrl(null)
+        setActiveRecordingId(null)
+        pendingSeekSecRef.current = null
+        setPlaybackDetections([])
+        setPlaybackEntryContext({ mode: "normal" })
+      } finally {
+        setPlaybackLoadingId(null)
+      }
     },
-  ]
+    [getSurveillanceAccessTokenOrNull, loading, openPlayback],
+  )
 
   const filteredEvents = events.filter((event) => {
     const matchesFilter = filter === "all" || event.status === filter
@@ -166,7 +375,8 @@ export function EventsAlerts() {
     const matchesSearch =
       event.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       event.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      event.location.toLowerCase().includes(searchQuery.toLowerCase())
+      event.location.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      event.camera.toLowerCase().includes(searchQuery.toLowerCase())
     return matchesFilter && matchesSeverity && matchesSearch
   })
 
@@ -178,8 +388,6 @@ export function EventsAlerts() {
         return "bg-orange-500/20 text-orange-400 border-orange-500/30"
       case "medium":
         return "bg-yellow-500/20 text-yellow-400 border-yellow-500/30"
-      case "low":
-        return "bg-blue-500/20 text-blue-400 border-blue-500/30"
       default:
         return "bg-gray-500/20 text-gray-400 border-gray-500/30"
     }
@@ -199,20 +407,24 @@ export function EventsAlerts() {
   }
 
   const getEventIcon = (type: string) => {
-    switch (type) {
-      case "Motion Detection":
-        return <Eye className="w-4 h-4" />
-      case "Unusual Behavior":
-        return <Users className="w-4 h-4" />
-      case "Perimeter Breach":
-        return <Shield className="w-4 h-4" />
-      case "Vehicle Alert":
-        return <Car className="w-4 h-4" />
-      case "Crowd Detection":
-        return <Users className="w-4 h-4" />
-      default:
-        return <AlertTriangle className="w-4 h-4" />
+    if (type.includes("Vehicle") || type.includes("Traffic") || type.includes("Car")) {
+      return <Car className="w-4 h-4" />
     }
+    if (type.includes("Security") || type.includes("Alert")) {
+      return <Shield className="w-4 h-4" />
+    }
+    if (
+      type.includes("Crowd") ||
+      type.includes("Altercation") ||
+      type.includes("Human") ||
+      type.includes("Suspicious")
+    ) {
+      return <Users className="w-4 h-4" />
+    }
+    if (type.includes("Suspicious")) {
+      return <Eye className="w-4 h-4" />
+    }
+    return <AlertTriangle className="w-4 h-4" />
   }
 
   const handleTakeAction = (eventId: string, action: string) => {
@@ -233,21 +445,22 @@ export function EventsAlerts() {
       message: actionMessages[action as keyof typeof actionMessages] || "Action completed",
     })
 
-    // Clear feedback after 3 seconds
     setTimeout(() => setActionFeedback(null), 3000)
   }
 
-  const handleViewCamera = (eventId: string, cameraId: string) => {
-    // This will be connected to the live feed functionality
-    console.log(`Viewing camera ${cameraId} for event ${eventId}`)
-    // You can add navigation to live feed with specific camera here
+  const handleViewCamera = () => {
+    router.replace("/?section=feeds")
   }
 
-  const handlePlayback = (eventId: string, timestamp: string) => {
-    // This will be connected to the playback functionality
-    console.log(`Playing back event ${eventId} from ${timestamp}`)
-    // You can add navigation to playback with specific timestamp here
+  const handlePlayback = (detectionId: string) => {
+    const ev = events.find((e) => e.detectionId === detectionId)
+    void playFromDetection(detectionId, ev?.absoluteEventTime ?? null)
   }
+
+  const summaryInsight =
+    events.length === 0
+      ? "No medium, high, or critical detection events in the last 7 days. Events appear after offline AI scans complete on stored recordings."
+      : `Monitoring ${events.length} detection-based event(s) from the last 7 days — ${criticalCount} critical, ${highCount} high, ${mediumCount} medium priority.`
 
   return (
     <div className="space-y-6">
@@ -255,9 +468,18 @@ export function EventsAlerts() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-foreground">Events & Alerts</h1>
-          <p className="text-muted-foreground">AI-driven notifications and event monitoring</p>
+          <p className="text-muted-foreground">AI-driven notifications from offline recording detections</p>
         </div>
         <div className="flex items-center gap-3">
+          <Button
+            variant="outline"
+            className="bg-transparent"
+            onClick={() => void loadDetections()}
+            disabled={loading}
+          >
+            <RefreshCw className={`w-4 h-4 mr-2 ${loading ? "animate-spin" : ""}`} />
+            Refresh
+          </Button>
           <Button variant="outline" className="bg-transparent">
             <Bell className="w-4 h-4 mr-2" />
             Notifications
@@ -280,30 +502,41 @@ export function EventsAlerts() {
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="text-center">
-              <div className="text-2xl font-bold text-red-400">2</div>
+              <div className="text-2xl font-bold text-red-400">{criticalCount}</div>
               <div className="text-sm text-muted-foreground">Critical Events</div>
             </div>
             <div className="text-center">
-              <div className="text-2xl font-bold text-orange-400">3</div>
+              <div className="text-2xl font-bold text-orange-400">{highCount}</div>
               <div className="text-sm text-muted-foreground">High Priority</div>
             </div>
             <div className="text-center">
-              <div className="text-2xl font-bold text-purple-400">2</div>
-              <div className="text-sm text-muted-foreground">Event Clusters</div>
+              <div className="text-2xl font-bold text-yellow-400">{mediumCount}</div>
+              <div className="text-sm text-muted-foreground">Medium Priority</div>
             </div>
           </div>
           <div className="mt-4 p-3 bg-purple-500/10 rounded-lg">
             <p className="text-sm text-purple-200">
-              <strong>AI Insight:</strong> Increased activity detected near Hospital Main Entrance. Multiple related
-              incidents suggest coordinated suspicious behavior requiring immediate attention.
+              <strong>AI Insight:</strong> {summaryInsight}
             </p>
           </div>
         </CardContent>
       </Card>
 
+      {error && (
+        <p className="text-sm text-red-400" role="alert">
+          {error}
+        </p>
+      )}
+
+      {loading && events.length === 0 && (
+        <p className="text-sm text-muted-foreground" role="status">
+          Loading detections from surveillance API…
+        </p>
+      )}
+
       {/* Controls */}
       <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <div className="flex items-center gap-2">
             <Search className="w-4 h-4 text-muted-foreground" />
             <Input
@@ -320,8 +553,6 @@ export function EventsAlerts() {
             <SelectContent>
               <SelectItem value="all">All Status</SelectItem>
               <SelectItem value="new">New</SelectItem>
-              <SelectItem value="acknowledged">Acknowledged</SelectItem>
-              <SelectItem value="resolved">Resolved</SelectItem>
             </SelectContent>
           </Select>
           <Select value={severityFilter} onValueChange={setSeverityFilter}>
@@ -333,7 +564,6 @@ export function EventsAlerts() {
               <SelectItem value="critical">Critical</SelectItem>
               <SelectItem value="high">High</SelectItem>
               <SelectItem value="medium">Medium</SelectItem>
-              <SelectItem value="low">Low</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -371,59 +601,46 @@ export function EventsAlerts() {
         </div>
       )}
 
+      {/* Playback — same pattern as recordings-history.tsx */}
+      {playbackUrl && activeRecordingId && (
+        <Card className="bg-slate-900/40 border-cyan-500/20">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Event Playback</CardTitle>
+            <CardDescription className="text-xs">
+              Segment {activeRecordingId}.
+              {playbackDetectionsLoading
+                ? " Loading detection data…"
+                : ` ${playbackDetections.length} detection(s) indexed.`}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <RecordingPlaybackPlayer
+              playbackUrl={playbackUrl}
+              recordingId={activeRecordingId}
+              detections={playbackDetections}
+              pendingSeekSec={pendingSeekSecRef.current}
+              entryContext={playbackEntryContext}
+              segmentStartIso={activeSegmentStart}
+              onSeekApplied={() => {
+                pendingSeekSecRef.current = null
+              }}
+            />
+          </CardContent>
+        </Card>
+      )}
+
       {/* Event Clusters View */}
       {viewMode === "clusters" && (
         <div className="space-y-4">
           <h2 className="text-xl font-semibold text-foreground">AI Event Clusters</h2>
-          {clusters.map((cluster) => (
-            <Card key={cluster.id} className="bg-card/50 backdrop-blur-sm border-slate-700/50">
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <CardTitle className="flex items-center gap-2">
-                    <AlertTriangle
-                      className={`w-5 h-5 ${cluster.severity === "critical" ? "text-red-500" : "text-orange-500"}`}
-                    />
-                    {cluster.title}
-                  </CardTitle>
-                  <Badge variant="outline" className={getSeverityColor(cluster.severity)}>
-                    {cluster.severity.toUpperCase()}
-                  </Badge>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <p className="text-muted-foreground mb-4">{cluster.description}</p>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-                  <div className="flex items-center gap-2">
-                    <MapPin className="w-4 h-4 text-muted-foreground" />
-                    <span className="text-sm text-foreground">{cluster.location}</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Clock className="w-4 h-4 text-muted-foreground" />
-                    <span className="text-sm text-foreground">{cluster.timeRange}</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <AlertTriangle className="w-4 h-4 text-muted-foreground" />
-                    <span className="text-sm text-foreground">{cluster.eventCount} events</span>
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  {cluster.events.slice(0, 2).map((event) => (
-                    <div key={event.id} className="p-2 bg-muted/20 rounded-lg text-sm">
-                      <div className="flex items-center justify-between">
-                        <span className="font-medium text-foreground">{event.title}</span>
-                        <span className="text-muted-foreground">{event.timestamp}</span>
-                      </div>
-                    </div>
-                  ))}
-                  {cluster.eventCount > 2 && (
-                    <Button variant="ghost" size="sm" className="w-full">
-                      View {cluster.eventCount - 2} more events
-                    </Button>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+          <Card className="bg-card/50 backdrop-blur-sm border-slate-700/50">
+            <CardContent className="py-12 text-center">
+              <AlertTriangle className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+              <p className="text-muted-foreground">
+                AI event clustering is not available for detection-based events yet.
+              </p>
+            </CardContent>
+          </Card>
         </div>
       )}
 
@@ -438,29 +655,24 @@ export function EventsAlerts() {
           {filteredEvents.map((event) => (
             <Card
               key={event.id}
-              className={`bg-card/50 backdrop-blur-sm border-slate-700/50 hover:bg-card/70 transition-colors cursor-pointer ${
+              className={`bg-card/50 backdrop-blur-sm border-slate-700/50 hover:bg-card/70 transition-colors ${
                 event.severity === "critical" ? "ring-1 ring-red-500/30" : ""
               }`}
-              onClick={() => setSelectedEvent(event)}
             >
               <CardContent className="p-4">
                 <div className="flex items-start gap-4">
-                  {/* Event Icon */}
                   <div
                     className={`w-10 h-10 rounded-lg flex items-center justify-center ${
                       event.severity === "critical"
                         ? "bg-red-500/20"
                         : event.severity === "high"
                           ? "bg-orange-500/20"
-                          : event.severity === "medium"
-                            ? "bg-yellow-500/20"
-                            : "bg-blue-500/20"
+                          : "bg-yellow-500/20"
                     }`}
                   >
                     {getEventIcon(event.type)}
                   </div>
 
-                  {/* Event Details */}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between mb-2">
                       <h3 className="font-semibold text-foreground">{event.title}</h3>
@@ -495,15 +707,14 @@ export function EventsAlerts() {
                       </div>
                     </div>
 
-                    {/* Action Buttons */}
-                    <div className="flex items-center gap-2 mt-3">
+                    <div className="flex items-center gap-2 mt-3 flex-wrap">
                       <Button
                         size="sm"
                         variant="outline"
                         className="bg-transparent"
                         onClick={(e) => {
                           e.stopPropagation()
-                          handleViewCamera(event.id, event.camera)
+                          handleViewCamera()
                         }}
                       >
                         <Eye className="w-4 h-4 mr-2" />
@@ -513,13 +724,14 @@ export function EventsAlerts() {
                         size="sm"
                         variant="outline"
                         className="bg-transparent"
+                        disabled={playbackLoadingId === event.detectionId}
                         onClick={(e) => {
                           e.stopPropagation()
-                          handlePlayback(event.id, event.timestamp)
+                          handlePlayback(event.detectionId)
                         }}
                       >
                         <Play className="w-4 h-4 mr-2" />
-                        Playback
+                        {playbackLoadingId === event.detectionId ? "Loading…" : "Playback"}
                       </Button>
                       <div className="relative">
                         <Button
@@ -602,13 +814,6 @@ export function EventsAlerts() {
                           </div>
                         )}
                       </div>
-
-                      {event.relatedEvents && (
-                        <Button size="sm" variant="outline" className="bg-transparent">
-                          <AlertTriangle className="w-4 h-4 mr-2" />
-                          {event.relatedEvents} Related
-                        </Button>
-                      )}
                     </div>
                   </div>
                 </div>
@@ -616,12 +821,16 @@ export function EventsAlerts() {
             </Card>
           ))}
 
-          {filteredEvents.length === 0 && (
+          {filteredEvents.length === 0 && !loading && (
             <Card className="bg-card/50 backdrop-blur-sm border-slate-700/50">
               <CardContent className="py-12 text-center">
                 <AlertTriangle className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
                 <h3 className="text-lg font-medium text-foreground mb-2">No events found</h3>
-                <p className="text-muted-foreground">Try adjusting your filters or search criteria.</p>
+                <p className="text-muted-foreground">
+                  {events.length === 0
+                    ? "No medium, high, or critical detection events in the last 7 days. Record footage and wait for the offline AI scan to complete."
+                    : "Try adjusting your filters or search criteria."}
+                </p>
               </CardContent>
             </Card>
           )}
