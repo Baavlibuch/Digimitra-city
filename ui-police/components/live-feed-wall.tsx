@@ -43,8 +43,10 @@ import {
   DELETED_FEEDS_STORAGE_KEY,
   FEED_DEVICE_MAP_STORAGE_KEY,
   emitCameraFeedsSync,
+  isFeedActive,
   type CameraFeed,
 } from "@/lib/camera-feeds"
+import { useLiveFeedAlerts, type LiveFeedNotification } from "@/lib/live-feed-alerts"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -315,8 +317,14 @@ const AI_NOTIFICATIONS: AINotification[] = [
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export function LiveFeedWall() {
-  const { user } = useAuth()
+  const { user, isCheckingAuth } = useAuth()
   const recordingOperatorId = (user?.email ?? user?.username ?? "").trim()
+  const {
+    alertByFeedId,
+    notifications: liveNotifications,
+    alertsError,
+    refreshAlerts,
+  } = useLiveFeedAlerts(recordingOperatorId, 8_000, !isCheckingAuth && Boolean(recordingOperatorId))
 
   const [activeRecordingByFeed, setActiveRecordingByFeed] = useState<Record<string, boolean>>({})
   const handleRecordingChange = useCallback((feedId: string, active: boolean) => {
@@ -425,7 +433,12 @@ export function LiveFeedWall() {
   const [autoArrange, setAutoArrange] = useState(true)
   const [showAISuggestions, setShowAISuggestions] = useState(true)
   const allFeeds = [...DEFAULT_CAMERA_FEEDS, ...customFeeds]
-  const visibleFeeds = allFeeds.filter((feed) => !deletedFeedIds.includes(feed.id))
+  const visibleFeeds = allFeeds.filter((feed) => {
+    if (deletedFeedIds.includes(feed.id)) return false
+    const isDefaultFeed = DEFAULT_CAMERA_FEEDS.some((defaultFeed) => defaultFeed.id === feed.id)
+    if (!isDefaultFeed) return true
+    return isFeedActive(feed, feedDeviceMap)
+  })
 
   // ── Playback state (fullscreen modal) ──
   const [isPlaying, setIsPlaying] = useState(true)
@@ -515,9 +528,12 @@ export function LiveFeedWall() {
       prev.includes(feedId) ? prev.filter((id) => id !== feedId) : [...prev, feedId]
     )
 
-  const handleAIAction = (n: AINotification) => {
+  const handleAIAction = (n: AINotification | LiveFeedNotification) => {
     if (n.action === "zoom" || n.action === "focus") setFullscreenFeed(n.cameraId)
   }
+
+  const aiPanelNotifications: (AINotification | LiveFeedNotification)[] =
+    liveNotifications.length > 0 ? liveNotifications : AI_NOTIFICATIONS
 
   // ── Feed device assignment ──
   const assignDevice = (feedId: string, deviceId: string) =>
@@ -721,22 +737,35 @@ export function LiveFeedWall() {
       </div>
 
       {/* ── AI Notifications ── */}
-      {showAISuggestions && AI_NOTIFICATIONS.length > 0 && (
+      {showAISuggestions && aiPanelNotifications.length > 0 && (
         <Card className="bg-gradient-to-r from-purple-500/10 to-blue-500/10 border-purple-500/20">
           <CardHeader>
             <div className="flex items-center justify-between">
               <CardTitle className="flex items-center gap-2">
                 <Zap className="w-5 h-5 text-purple-400" />
                 AI Suggestions
+                {liveNotifications.length > 0 && (
+                  <Badge variant="secondary" className="text-[10px] font-normal">
+                    Live
+                  </Badge>
+                )}
               </CardTitle>
-              <Button variant="ghost" size="sm" onClick={() => setShowAISuggestions(false)}>
-                <X className="w-4 h-4" />
-              </Button>
+              <div className="flex items-center gap-1">
+                <Button variant="ghost" size="sm" onClick={() => void refreshAlerts()} title="Refresh alerts">
+                  <RefreshCw className="w-4 h-4" />
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => setShowAISuggestions(false)}>
+                  <X className="w-4 h-4" />
+                </Button>
+              </div>
             </div>
+            {alertsError && liveNotifications.length === 0 && (
+              <p className="text-xs text-muted-foreground mt-1">Showing cached suggestions — {alertsError}</p>
+            )}
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {AI_NOTIFICATIONS.slice(0, 2).map((n) => (
+              {aiPanelNotifications.slice(0, 2).map((n) => (
                 <div key={n.id} className="flex items-center justify-between p-3 bg-purple-500/10 rounded-lg">
                   <div className="flex items-center gap-3">
                     <div className="w-2 h-2 bg-purple-400 rounded-full animate-pulse" />
@@ -872,11 +901,13 @@ export function LiveFeedWall() {
                   </div>
                 )}
 
-                {/* AI suggestion overlay */}
-                {feed.aiSuggestion && (
+                {/* AI suggestion overlay — live detection alert or static fallback */}
+                {(alertByFeedId.get(feed.id)?.message ?? feed.aiSuggestion) && (
                   <div className="absolute bottom-2 left-2 right-2 z-10">
                     <div className="bg-blue-500/90 backdrop-blur-sm rounded px-2 py-1">
-                      <p className="text-white text-xs">{feed.aiSuggestion}</p>
+                      <p className="text-white text-xs">
+                        {alertByFeedId.get(feed.id)?.message ?? feed.aiSuggestion}
+                      </p>
                     </div>
                   </div>
                 )}
