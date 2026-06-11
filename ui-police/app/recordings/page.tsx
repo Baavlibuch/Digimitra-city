@@ -6,7 +6,6 @@ import { ThemeProvider } from "@/components/theme-provider"
 import { useAuth } from "@/components/auth-provider"
 import { Navigation } from "@/components/navigation"
 import { RecordingsHistory } from "@/components/recordings-history"
-import { VideoFileUpload } from "@/components/video-file-upload"
 import { AIAgentPanel } from "@/components/ai-agent-panel"
 
 export default function RecordingsPage() {
@@ -69,10 +68,10 @@ export default function RecordingsPage() {
           )}
 
           <main className="container mx-auto px-6 py-8">
-            <VideoFileUpload
+            <RecordingsHistory
+              catalogRefreshTrigger={catalogRefreshTrigger}
               onUploaded={() => setCatalogRefreshTrigger((n) => n + 1)}
             />
-            <RecordingsHistory catalogRefreshTrigger={catalogRefreshTrigger} />
           </main>
 
           <AIAgentPanel />

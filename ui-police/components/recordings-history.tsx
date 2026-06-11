@@ -37,6 +37,7 @@ import {
   RecordingPlaybackPlayer,
   type PlaybackEntryContext,
 } from "@/components/recording-playback-player"
+import { VideoFileUpload } from "@/components/video-file-upload"
 
 function formatDt(iso: string | null | undefined) {
   if (!iso) return "—"
@@ -55,6 +56,22 @@ function formatBytes(n: number | null | undefined) {
   if (n < 1024) return `${n} B`
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
   return `${(n / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function displayRecordingCameraName(
+  row: RecordingSegmentDto,
+  cameraNameById: Map<string, string>,
+): string {
+  const fromTable = cameraNameById.get(row.camera_id)
+  const fromExtra =
+    row.extra && typeof row.extra.camera_name === "string" ? row.extra.camera_name : null
+  const resolved = fromTable ?? fromExtra ?? row.camera_id.slice(0, 8)
+  if (resolved === "Uploaded video" || row.camera_id === "file-upload") return "Camera Rec"
+  return resolved
+}
+
+function displayIngestSource(ingestSource: string): string {
+  return ingestSource === "browser_file_upload" ? "Camera" : ingestSource
 }
 
 /** Local calendar day yyyy-mm-dd */
@@ -91,9 +108,10 @@ function combineLocalDateTimeToIso(dateStr: string, timeStr: string, edge: "star
 type RecordingsHistoryProps = {
   /** When incremented by the file-upload feature, reloads catalog without changing filters. */
   catalogRefreshTrigger?: number
+  onUploaded?: () => void
 }
 
-export function RecordingsHistory({ catalogRefreshTrigger }: RecordingsHistoryProps = {}) {
+export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: RecordingsHistoryProps = {}) {
   const { user, isCheckingAuth } = useAuth()
   const operator = (user?.username || "operator").trim() || "operator"
 
@@ -655,14 +673,19 @@ export function RecordingsHistory({ catalogRefreshTrigger }: RecordingsHistoryPr
 
       <Card className="bg-card/50 backdrop-blur-sm border-slate-700/50">
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-xl">
-            <Video className="h-5 w-5 text-cyan-400" />
-            Recording history
-          </CardTitle>
-          <CardDescription>
-            Pick a quick range or choose date and time separately (larger native pickers). Playback uses short-lived
-            signed URLs.
-          </CardDescription>
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <CardTitle className="flex items-center gap-2 text-xl">
+                <Video className="h-5 w-5 text-cyan-400" />
+                Recording history
+              </CardTitle>
+              <CardDescription>
+                Pick a quick range or choose date and time separately (larger native pickers). Playback uses short-lived
+                signed URLs.
+              </CardDescription>
+            </div>
+            <VideoFileUpload variant="compact" onUploaded={onUploaded} />
+          </div>
         </CardHeader>
         <CardContent className="space-y-5">
           <div className="flex flex-wrap gap-2">
@@ -878,7 +901,7 @@ export function RecordingsHistory({ catalogRefreshTrigger }: RecordingsHistoryPr
                     <tr key={r.id} className="border-t border-slate-800/80 hover:bg-muted/10">
                       <td className="p-3 align-top">
                         <div className="font-medium text-foreground">
-                          {cameraNameById.get(r.camera_id) ?? r.camera_id.slice(0, 8)}
+                          {displayRecordingCameraName(r, cameraNameById)}
                         </div>
                         <div className="text-xs text-muted-foreground truncate max-w-[200px]" title={r.object_key}>
                           {r.object_key}
@@ -895,7 +918,7 @@ export function RecordingsHistory({ catalogRefreshTrigger }: RecordingsHistoryPr
                         </Badge>
                       </td>
                       <td className="p-3 align-top">{formatBytes(r.size_bytes)}</td>
-                      <td className="p-3 align-top text-muted-foreground text-xs">{r.ingest_source}</td>
+                      <td className="p-3 align-top text-muted-foreground text-xs">{displayIngestSource(r.ingest_source)}</td>
                       <td className="p-3 align-top">
                         <div className="flex flex-wrap items-center gap-1.5">
                           <Button

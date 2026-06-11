@@ -54,9 +54,10 @@ function formatBytes(n: number): string {
 
 type VideoFileUploadProps = {
   onUploaded?: (result: UploadVideoFileResponse) => void
+  variant?: "card" | "compact"
 }
 
-export function VideoFileUpload({ onUploaded }: VideoFileUploadProps) {
+export function VideoFileUpload({ onUploaded, variant = "card" }: VideoFileUploadProps) {
   const { user, isCheckingAuth } = useAuth()
   const operator = (user?.username || "operator").trim() || "operator"
 
@@ -84,25 +85,8 @@ export function VideoFileUpload({ onUploaded }: VideoFileUploadProps) {
     return { cameraId: VIRTUAL_CAMERA_ID, cameraName: VIRTUAL_CAMERA_NAME }
   }, [cameraMode, selectedCameraId, cameras])
 
-  const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setError(null)
-    setLastResult(null)
-    const file = e.target.files?.[0] ?? null
-    if (!file) {
-      setSelectedFile(null)
-      return
-    }
-    if (!isAllowedVideoFile(file)) {
-      setSelectedFile(null)
-      setError("Unsupported format. Choose MP4, MOV, AVI, or WebM.")
-      e.target.value = ""
-      return
-    }
-    setSelectedFile(file)
-  }
-
-  const handleUpload = async () => {
-    if (!selectedFile || uploading) return
+  const runUpload = async (file: File) => {
+    if (uploading) return
     setError(null)
     setUploading(true)
     try {
@@ -112,7 +96,7 @@ export function VideoFileUpload({ onUploaded }: VideoFileUploadProps) {
       const segmentStartedAt = new Date().toISOString()
       const result = await uploadVideoFile({
         token,
-        file: selectedFile,
+        file,
         cameraId,
         cameraName,
         recordingSessionId,
@@ -133,6 +117,70 @@ export function VideoFileUpload({ onUploaded }: VideoFileUploadProps) {
     } finally {
       setUploading(false)
     }
+  }
+
+  const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setError(null)
+    setLastResult(null)
+    const file = e.target.files?.[0] ?? null
+    if (!file) {
+      setSelectedFile(null)
+      return
+    }
+    if (!isAllowedVideoFile(file)) {
+      setSelectedFile(null)
+      setError("Unsupported format. Choose MP4, MOV, AVI, or WebM.")
+      e.target.value = ""
+      return
+    }
+    if (variant === "compact") {
+      void runUpload(file)
+      return
+    }
+    setSelectedFile(file)
+  }
+
+  const handleUpload = async () => {
+    if (!selectedFile || uploading) return
+    await runUpload(selectedFile)
+  }
+
+  if (variant === "compact") {
+    return (
+      <div className="flex flex-col items-end gap-1 shrink-0">
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept={ALLOWED_VIDEO_FILE_ACCEPT}
+          onChange={onFileChange}
+          disabled={uploading}
+          className="hidden"
+          aria-hidden
+        />
+        <Button
+          type="button"
+          size="sm"
+          variant="secondary"
+          className="border-slate-600"
+          disabled={uploading}
+          onClick={() => fileInputRef.current?.click()}
+        >
+          {uploading ? (
+            <>
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Adding…
+            </>
+          ) : (
+            "Add"
+          )}
+        </Button>
+        {error && (
+          <p className="text-xs text-red-400 max-w-[200px] text-right" role="alert">
+            {error}
+          </p>
+        )}
+      </div>
+    )
   }
 
   return (
