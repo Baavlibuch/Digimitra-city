@@ -19,6 +19,7 @@ from shared.recording_clip_milvus import register_recording_clip_collection_drop
 register_recording_clip_collection_dropped_hook(recording_clip_search.invalidate_recording_clip_collection_cache)
 
 from .ai_service import AIService
+from .live_alerts_hub import router as live_alerts_router
 from .schemas import AIRequest
 from .storage_service import MinIOStorageService
 from shared.minio_config import minio_endpoint, minio_public_base_url, minio_public_endpoint_and_secure
@@ -28,6 +29,7 @@ from shared.models import Camera as CameraModel
 from .schemas import Camera as CameraSchema, CameraCreate, CameraUpdate
 
 app = FastAPI()
+app.include_router(live_alerts_router)
 # Browsers cannot combine allow_origins=["*"] with allow_credentials=True; use * for dev tooling / OPTIONS preflight.
 _cors_params = dict(
     allow_origins=["*"],

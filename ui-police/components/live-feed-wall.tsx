@@ -47,6 +47,10 @@ import {
   type CameraFeed,
 } from "@/lib/camera-feeds"
 import { useLiveFeedAlerts, type LiveFeedNotification } from "@/lib/live-feed-alerts"
+import { useLiveAlertWebSocket, type LiveWsAlert } from "@/lib/use-live-alert-websocket"
+import { useLiveFramePusher } from "@/lib/use-live-frame-pusher"
+import { isLiveWebSocketEnabled } from "@/lib/live-ws-config"
+import { LiveBboxOverlay } from "@/components/live-bbox-overlay"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -141,8 +145,25 @@ function useDeviceList() {
 
 // ─── Live video element ───────────────────────────────────────────────────────
 
-function WebcamPreview({ stream, muted }: { stream: MediaStream | null; muted: boolean }) {
+function WebcamPreview({
+  stream,
+  muted,
+  cameraId,
+  operatorUsername,
+  liveFramePushEnabled,
+}: {
+  stream: MediaStream | null
+  muted: boolean
+  cameraId?: string
+  operatorUsername?: string
+  liveFramePushEnabled?: boolean
+}) {
   const videoRef = useRef<HTMLVideoElement>(null)
+  useLiveFramePusher(videoRef, {
+    cameraId: cameraId ?? "",
+    operatorUsername: operatorUsername ?? "",
+    enabled: Boolean(liveFramePushEnabled && cameraId && operatorUsername && stream),
+  })
 
   useEffect(() => {
     const el = videoRef.current
@@ -202,12 +223,14 @@ function WebcamTileBody({
   operatorUsername,
   onRecordingChange,
   renderHover,
+  liveFramePushEnabled,
 }: {
   feed: CameraFeed
   deviceId?: string
   operatorUsername: string
   onRecordingChange: (feedId: string, active: boolean) => void
   renderHover: () => ReactNode
+  liveFramePushEnabled?: boolean
 }) {
   const { stream } = useWebcamStream(deviceId)
   const recordingMeta = useMemo(
@@ -224,7 +247,13 @@ function WebcamTileBody({
 
   return (
     <>
-      <WebcamPreview stream={stream} muted />
+      <WebcamPreview
+        stream={stream}
+        muted
+        cameraId={feed.id}
+        operatorUsername={operatorUsername}
+        liveFramePushEnabled={liveFramePushEnabled}
+      />
       {uploadError && (
         <div className="absolute bottom-11 left-2 right-2 z-30 rounded-md bg-red-950/95 px-2 py-1.5 text-[10px] leading-snug text-red-50 shadow-lg">
           <span>{uploadError}</span>
@@ -325,6 +354,12 @@ export function LiveFeedWall() {
     alertsError,
     refreshAlerts,
   } = useLiveFeedAlerts(recordingOperatorId, 8_000, !isCheckingAuth && Boolean(recordingOperatorId))
+
+  const liveWs = useLiveAlertWebSocket(
+    recordingOperatorId,
+    !isCheckingAuth && Boolean(recordingOperatorId),
+  )
+  const liveWsEnabled = isLiveWebSocketEnabled()
 
   const [activeRecordingByFeed, setActiveRecordingByFeed] = useState<Record<string, boolean>>({})
   const handleRecordingChange = useCallback((feedId: string, active: boolean) => {
@@ -532,8 +567,21 @@ export function LiveFeedWall() {
     if (n.action === "zoom" || n.action === "focus") setFullscreenFeed(n.cameraId)
   }
 
+  const wsPanelNotifications: LiveFeedNotification[] = liveWs.alerts.slice(0, 3).map((a: LiveWsAlert) => ({
+    id: a.alert_id ?? `${a.camera_id}-${a.timestamp}`,
+    cameraId: a.camera_id,
+    message: a.message,
+    timestamp: "just now",
+    type: a.severity === "high" || a.severity === "critical" ? "alert" : "suggestion",
+    action: "zoom" as const,
+  }))
+
   const aiPanelNotifications: (AINotification | LiveFeedNotification)[] =
-    liveNotifications.length > 0 ? liveNotifications : AI_NOTIFICATIONS
+    liveWsEnabled && wsPanelNotifications.length > 0
+      ? wsPanelNotifications
+      : liveNotifications.length > 0
+        ? liveNotifications
+        : AI_NOTIFICATIONS
 
   // ── Feed device assignment ──
   const assignDevice = (feedId: string, deviceId: string) =>
@@ -733,6 +781,17 @@ export function LiveFeedWall() {
             <RefreshCw className="w-4 h-4 mr-2" />
             Refresh Cameras
           </Button>
+          {liveWsEnabled && liveWs.status === "connected" && (
+            <Badge className="bg-green-600/90 text-white border-0">Live AI Connected</Badge>
+          )}
+          {liveWsEnabled && liveWs.status === "connecting" && (
+            <Badge variant="secondary">Live AI Connecting…</Badge>
+          )}
+          {liveWsEnabled && liveWs.status === "error" && (
+            <Badge variant="destructive" title={liveWs.error ?? undefined}>
+              Live AI Error
+            </Badge>
+          )}
         </div>
       </div>
 
@@ -744,11 +803,11 @@ export function LiveFeedWall() {
               <CardTitle className="flex items-center gap-2">
                 <Zap className="w-5 h-5 text-purple-400" />
                 AI Suggestions
-                {liveNotifications.length > 0 && (
+                {(liveWsEnabled && liveWs.status === "connected") || liveNotifications.length > 0 ? (
                   <Badge variant="secondary" className="text-[10px] font-normal">
-                    Live
+                    {liveWsEnabled && liveWs.status === "connected" ? "Live WS" : "Live"}
                   </Badge>
-                )}
+                ) : null}
               </CardTitle>
               <div className="flex items-center gap-1">
                 <Button variant="ghost" size="sm" onClick={() => void refreshAlerts()} title="Refresh alerts">
@@ -828,11 +887,21 @@ export function LiveFeedWall() {
         className="grid gap-4"
         style={{ gridTemplateColumns: `repeat(${cols}, 1fr)` }}
       >
-        {displayFeeds.map((feed) => (
+        {displayFeeds.map((feed) => {
+          const wsAlert = liveWs.alertByCameraId.get(feed.id)
+          const wsBboxes = liveWs.latestBboxesByCameraId.get(feed.id)
+          const polledAlert = alertByFeedId.get(feed.id)
+          const tileAlertMessage =
+            liveWsEnabled && wsAlert
+              ? wsAlert.message
+              : polledAlert?.message ?? feed.aiSuggestion
+          const hasLiveHighlight = Boolean(liveWsEnabled && wsAlert)
+
+          return (
           <Card
             key={feed.id}
             className={`bg-card/50 backdrop-blur-sm border-slate-700/50 hover:bg-card/70 transition-colors relative ${
-              feed.status === "alert" ? "ring-2 ring-red-500/50" : ""
+              feed.status === "alert" || hasLiveHighlight ? "ring-2 ring-red-500/50" : ""
             }`}
           >
             <CardContent className="p-0">
@@ -854,6 +923,7 @@ export function LiveFeedWall() {
                     feed={feed}
                     deviceId={feedDeviceMap[feed.id]}
                     operatorUsername={recordingOperatorId}
+                    liveFramePushEnabled={liveWsEnabled}
                     onRecordingChange={handleRecordingChange}
                     renderHover={() => (
                       <TileHoverChrome
@@ -901,13 +971,19 @@ export function LiveFeedWall() {
                   </div>
                 )}
 
-                {/* AI suggestion overlay — live detection alert or static fallback */}
-                {(alertByFeedId.get(feed.id)?.message ?? feed.aiSuggestion) && (
+                {liveWsEnabled && wsBboxes && wsBboxes.length > 0 && (
+                  <LiveBboxOverlay bboxes={wsBboxes} />
+                )}
+
+                {/* AI suggestion overlay — WS live alert, polled detection, or static fallback */}
+                {tileAlertMessage && (
                   <div className="absolute bottom-2 left-2 right-2 z-10">
-                    <div className="bg-blue-500/90 backdrop-blur-sm rounded px-2 py-1">
-                      <p className="text-white text-xs">
-                        {alertByFeedId.get(feed.id)?.message ?? feed.aiSuggestion}
-                      </p>
+                    <div
+                      className={`backdrop-blur-sm rounded px-2 py-1 ${
+                        hasLiveHighlight ? "bg-red-600/90" : "bg-blue-500/90"
+                      }`}
+                    >
+                      <p className="text-white text-xs">{tileAlertMessage}</p>
                     </div>
                   </div>
                 )}
@@ -948,7 +1024,8 @@ export function LiveFeedWall() {
               </div>
             </CardContent>
           </Card>
-        ))}
+          )
+        })}
 
         {/* Empty slots */}
         {Array.from({ length: maxFeeds - displayFeeds.length }).map((_, i) => (

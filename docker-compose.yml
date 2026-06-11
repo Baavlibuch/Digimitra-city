@@ -115,6 +115,8 @@ services:
       MILVUS_CONNECT_RETRY_SEC: "2"
       JWT_SECRET: devsecret
       ALLOW_ANY_LOGIN: "true"
+      LIVE_ALERT_INTERNAL_SECRET: live-internal-dev-secret
+      LIVE_AGENT_INGEST_URL: http://live-detection-agent:8765
       PYTHONPATH: /app
       <<: *default-env
     ports:
@@ -185,6 +187,39 @@ services:
     volumes:
       - ./video-samples:/data/videos:ro
       - hls_data:/hls
+
+  live-detection-agent:
+    build:
+      context: .
+      dockerfile: ./live-detection-agent/Dockerfile
+    depends_on: [postgres, api]
+    environment:
+      DATABASE_URL: postgresql+psycopg2://svc:svcpass@postgres:5432/eventsdb
+      API_BASE_URL: http://api:8000
+      LIVE_ALERT_INTERNAL_SECRET: live-internal-dev-secret
+      YOLO_MODEL: yolov8n.pt
+      YOLO_CONFIDENCE: "0.35"
+      YOLO_DEVICE: cpu
+      YOLO_IMGSZ: "416"
+      FRAME_FPS: "1"
+      FRAME_INGEST_HOST: 0.0.0.0
+      FRAME_INGEST_PORT: "8765"
+      LIVE_BROWSER_CAMERA_IDS: "1,2,3,4,5,6,7,8,9"
+      VIDEO_FALLBACK_DIR: /data/videos
+      LIVE_CROWD_MIN_PERSONS: "8"
+      LIVE_CROWD_DURATION_SEC: "5"
+      LIVE_CONGESTION_MIN_VEHICLES: "6"
+      LIVE_CONGESTION_MAX_SPEED_PX: "3.0"
+      LIVE_CONGESTION_DURATION_SEC: "8"
+      LIVE_WRONG_WAY_MIN_SPEED_PX: "2.0"
+      LIVE_WRONG_WAY_DOT_THRESHOLD: "-0.5"
+      LIVE_ALERT_COOLDOWN_SEC: "30"
+      PYTHONPATH: /app:/app/live-detection-agent
+      <<: *default-env
+    ports:
+      - "8765:8765"
+    volumes:
+      - ./video-samples:/data/videos:ro
 
 volumes:
   minio_data:
