@@ -20,7 +20,7 @@ export interface CameraFeed {
   hasAudio: boolean
   resolution: string
   deviceId?: string
-  sourceType?: "webcam" | "cctv"
+  sourceType?: "webcam" | "cctv" | "local_video"
   cctvStreamUrl?: string
   cctvStreamType?: "rtsp" | "hls" | "http"
   coverageArea?: CameraCoverageArea | null

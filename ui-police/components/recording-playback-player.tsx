@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { AlertTriangle, Search } from "lucide-react"
+import { AlertTriangle, Maximize2, Minimize2, Search } from "lucide-react"
 import type { DetectionDto } from "@/lib/surveillance-api"
 import {
   bboxToPercentRect,
@@ -88,7 +88,13 @@ export function RecordingPlaybackPlayer({
   const [zoomActive, setZoomActive] = useState(false)
   const [zoomStyle, setZoomStyle] = useState<React.CSSProperties>({})
   const [highlightId, setHighlightId] = useState<string | null>(null)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  const [fullscreenSupported, setFullscreenSupported] = useState(false)
   const lastEventSignatureRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    setFullscreenSupported(typeof document.documentElement.requestFullscreen === "function")
+  }, [])
 
   const searchEvidence = entryContext.mode === "semantic" ? entryContext.evidence : null
   const searchOffsetMs = searchEvidence?.offsetMs ?? null
@@ -126,6 +132,30 @@ export function RecordingPlaybackPlayer({
     if (ro && containerRef.current) ro.observe(containerRef.current)
     return () => ro?.disconnect()
   }, [measureLayout, playbackUrl])
+
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      const el = containerRef.current
+      setIsFullscreen(Boolean(el && document.fullscreenElement === el))
+      measureLayout()
+    }
+    document.addEventListener("fullscreenchange", onFullscreenChange)
+    return () => document.removeEventListener("fullscreenchange", onFullscreenChange)
+  }, [measureLayout])
+
+  const toggleFullscreen = useCallback(async () => {
+    const el = containerRef.current
+    if (!el || !fullscreenSupported) return
+    try {
+      if (document.fullscreenElement === el) {
+        await document.exitFullscreen()
+        return
+      }
+      await el.requestFullscreen()
+    } catch {
+      /* Fullscreen denied or unavailable — playback continues */
+    }
+  }, [fullscreenSupported])
 
   const applyZoomToDetection = useCallback(
     (det: DetectionDto | null) => {
@@ -274,7 +304,10 @@ export function RecordingPlaybackPlayer({
     <div className="space-y-3">
       <div
         ref={containerRef}
-        className="relative w-full max-h-[420px] aspect-video rounded-md border border-slate-700 bg-black overflow-hidden"
+        className={cn(
+          "relative w-full max-h-[420px] aspect-video rounded-md border border-slate-700 bg-black overflow-hidden",
+          isFullscreen && "max-h-none aspect-auto size-full rounded-none border-0",
+        )}
       >
         <div className="absolute inset-0 overflow-hidden">
           <video
@@ -402,9 +435,25 @@ export function RecordingPlaybackPlayer({
             >
               Play / Pause
             </button>
-            <span>
-              {(currentMs / 1000).toFixed(1)}s / {durationSec > 0 ? durationSec.toFixed(1) : "—"}s
-            </span>
+            <div className="flex items-center gap-2">
+              <span>
+                {(currentMs / 1000).toFixed(1)}s / {durationSec > 0 ? durationSec.toFixed(1) : "—"}s
+              </span>
+              {fullscreenSupported && (
+                <button
+                  type="button"
+                  className="rounded p-1.5 hover:bg-white/10"
+                  aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+                  onClick={() => void toggleFullscreen()}
+                >
+                  {isFullscreen ? (
+                    <Minimize2 className="h-4 w-4" />
+                  ) : (
+                    <Maximize2 className="h-4 w-4" />
+                  )}
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>

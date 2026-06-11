@@ -641,7 +641,7 @@ export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: Recordi
             </p>
           )}
           {semanticHits.length > 0 && (
-            <div className="rounded-md border border-slate-700/60 bg-muted/10 max-h-48 overflow-y-auto text-sm">
+            <div className="recordings-table-scroll rounded-md border border-slate-700/60 bg-muted/10 max-h-[224px] overflow-auto text-sm">
               <ul className="divide-y divide-slate-800/80">
                 {semanticHits.map((h) => (
                   <li key={`${h.recording_segment_id}-${h.timestamp_offset_ms}-${h.vector_id ?? ""}`} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
@@ -668,180 +668,6 @@ export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: Recordi
               </ul>
             </div>
           )}
-        </CardContent>
-      </Card>
-
-      <Card className="bg-card/50 backdrop-blur-sm border-slate-700/50">
-        <CardHeader>
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <CardTitle className="flex items-center gap-2 text-xl">
-                <Video className="h-5 w-5 text-cyan-400" />
-                Recording history
-              </CardTitle>
-              <CardDescription>
-                Pick a quick range or choose date and time separately (larger native pickers). Playback uses short-lived
-                signed URLs.
-              </CardDescription>
-            </div>
-            <VideoFileUpload variant="compact" onUploaded={onUploaded} />
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-5">
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" variant="secondary" size="sm" className="border-slate-600" onClick={() => applyPreset("24h")}>
-              Last 24 hours
-            </Button>
-            <Button type="button" variant="secondary" size="sm" className="border-slate-600" onClick={() => applyPreset("7d")}>
-              Last 7 days
-            </Button>
-            <Button type="button" variant="secondary" size="sm" className="border-slate-600" onClick={() => applyPreset("today")}>
-              Today
-            </Button>
-            <Button type="button" variant="ghost" size="sm" onClick={() => applyPreset("clear")}>
-              Clear range
-            </Button>
-          </div>
-
-          <div className="grid gap-5 lg:grid-cols-3">
-            <div className="space-y-2">
-              <Label>Camera</Label>
-              <Select value={cameraFilter} onValueChange={setCameraFilter}>
-                <SelectTrigger className="h-11 bg-background/60 border-slate-600 text-base">
-                  <SelectValue placeholder="All cameras" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All cameras</SelectItem>
-                  {cameras.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>
-                      {c.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Object (AI)</Label>
-              <Select value={objectTypeFilter} onValueChange={setObjectTypeFilter}>
-                <SelectTrigger className="h-11 bg-background/60 border-slate-600 text-base">
-                  <SelectValue placeholder="All types" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All types</SelectItem>
-                  <SelectItem value="person">person</SelectItem>
-                  <SelectItem value="bicycle">bicycle</SelectItem>
-                  <SelectItem value="car">car</SelectItem>
-                  <SelectItem value="motorcycle">motorcycle</SelectItem>
-                  <SelectItem value="bus">bus</SelectItem>
-                  <SelectItem value="truck">truck</SelectItem>
-                  <SelectItem value="backpack">backpack</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="flex items-end">
-              <Button
-                type="button"
-                variant="secondary"
-                className="h-11 w-full border-slate-600 text-base"
-                onClick={() => void load()}
-                disabled={loading}
-              >
-                {loading ? (
-                  <span className="inline-flex items-center gap-2">
-                    <RefreshCw className="h-4 w-4 animate-spin" />
-                    Loading…
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-2">
-                    <RefreshCw className="h-4 w-4" />
-                    Apply filters
-                  </span>
-                )}
-              </Button>
-            </div>
-          </div>
-
-          <div className="grid gap-6 rounded-lg border border-slate-700/50 bg-muted/10 p-4 sm:grid-cols-2">
-            <div className="space-y-3">
-              <p className="text-sm font-medium text-foreground">From</p>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="space-y-1.5">
-                  <Label htmlFor="rec-from-date" className="text-xs text-muted-foreground">
-                    Date
-                  </Label>
-                  <Input
-                    id="rec-from-date"
-                    type="date"
-                    value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
-                    className="h-11 min-h-11 cursor-pointer bg-background/80 text-base border-slate-600"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="rec-from-time" className="text-xs text-muted-foreground">
-                    Time (optional)
-                  </Label>
-                  <Input
-                    id="rec-from-time"
-                    type="time"
-                    value={startTime}
-                    onChange={(e) => setStartTime(e.target.value)}
-                    className="h-11 min-h-11 cursor-pointer bg-background/80 text-base border-slate-600"
-                  />
-                </div>
-              </div>
-              <p className="text-xs text-muted-foreground">Leave time empty to use start of that day (00:00).</p>
-            </div>
-
-            <div className="space-y-3">
-              <p className="text-sm font-medium text-foreground">To</p>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="space-y-1.5">
-                  <Label htmlFor="rec-to-date" className="text-xs text-muted-foreground">
-                    Date
-                  </Label>
-                  <Input
-                    id="rec-to-date"
-                    type="date"
-                    value={endDate}
-                    onChange={(e) => setEndDate(e.target.value)}
-                    className="h-11 min-h-11 cursor-pointer bg-background/80 text-base border-slate-600"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="rec-to-time" className="text-xs text-muted-foreground">
-                    Time (optional)
-                  </Label>
-                  <Input
-                    id="rec-to-time"
-                    type="time"
-                    value={endTime}
-                    onChange={(e) => setEndTime(e.target.value)}
-                    className="h-11 min-h-11 cursor-pointer bg-background/80 text-base border-slate-600"
-                  />
-                </div>
-              </div>
-              <p className="text-xs text-muted-foreground">Leave time empty to use end of that day (23:59:59).</p>
-            </div>
-          </div>
-
-          {error && (
-            <p className="text-sm text-red-400" role="alert">
-              {error}
-            </p>
-          )}
-
-          <div className="flex items-center justify-between text-sm text-muted-foreground">
-            <span>
-              Showing {rows.length} of {total} segments
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <HardDrive className="h-3.5 w-3.5" />
-              MinIO-backed
-            </span>
-          </div>
         </CardContent>
       </Card>
 
@@ -873,33 +699,190 @@ export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: Recordi
         </Card>
       )}
 
+      <Card className="bg-card/50 backdrop-blur-sm border-slate-700/50">
+        <CardHeader>
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <CardTitle className="flex items-center gap-2 text-xl">
+                <Video className="h-5 w-5 text-cyan-400" />
+                Recording history
+              </CardTitle>
+              <CardDescription>
+                Pick a quick range or choose date and time separately (larger native pickers). Playback uses short-lived
+                signed URLs.
+              </CardDescription>
+            </div>
+            <VideoFileUpload variant="compact" onUploaded={onUploaded} />
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-2 px-4 pb-3 pt-0">
+          <div className="flex flex-wrap gap-1.5">
+            <Button type="button" variant="secondary" size="sm" className="h-7 border-slate-600 px-2 text-xs" onClick={() => applyPreset("24h")}>
+              Last 24h
+            </Button>
+            <Button type="button" variant="secondary" size="sm" className="h-7 border-slate-600 px-2 text-xs" onClick={() => applyPreset("7d")}>
+              Last 7d
+            </Button>
+            <Button type="button" variant="secondary" size="sm" className="h-7 border-slate-600 px-2 text-xs" onClick={() => applyPreset("today")}>
+              Today
+            </Button>
+            <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => applyPreset("clear")}>
+              Clear
+            </Button>
+          </div>
+
+          <div className="grid gap-2 lg:grid-cols-3">
+            <div className="space-y-1">
+              <Label className="text-[11px] text-muted-foreground">Camera</Label>
+              <Select value={cameraFilter} onValueChange={setCameraFilter}>
+                <SelectTrigger className="h-8 bg-background/60 border-slate-600 text-xs">
+                  <SelectValue placeholder="All cameras" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All cameras</SelectItem>
+                  {cameras.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1">
+              <Label className="text-[11px] text-muted-foreground">Object (AI)</Label>
+              <Select value={objectTypeFilter} onValueChange={setObjectTypeFilter}>
+                <SelectTrigger className="h-8 bg-background/60 border-slate-600 text-xs">
+                  <SelectValue placeholder="All types" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All types</SelectItem>
+                  <SelectItem value="person">person</SelectItem>
+                  <SelectItem value="bicycle">bicycle</SelectItem>
+                  <SelectItem value="car">car</SelectItem>
+                  <SelectItem value="motorcycle">motorcycle</SelectItem>
+                  <SelectItem value="bus">bus</SelectItem>
+                  <SelectItem value="truck">truck</SelectItem>
+                  <SelectItem value="backpack">backpack</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex items-end">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="h-8 w-full border-slate-600 text-xs"
+                onClick={() => void load()}
+                disabled={loading}
+              >
+                {loading ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                    Loading…
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5">
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    Apply
+                  </span>
+                )}
+              </Button>
+            </div>
+          </div>
+
+          <div className="grid gap-2 rounded-md border border-slate-700/50 bg-muted/10 p-2 sm:grid-cols-2">
+            <div className="space-y-1">
+              <p className="text-[11px] font-medium text-muted-foreground">From</p>
+              <div className="grid grid-cols-2 gap-1.5">
+                <Input
+                  id="rec-from-date"
+                  type="date"
+                  aria-label="From date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="h-8 min-h-8 cursor-pointer bg-background/80 text-xs border-slate-600 px-2"
+                />
+                <Input
+                  id="rec-from-time"
+                  type="time"
+                  aria-label="From time (optional)"
+                  value={startTime}
+                  onChange={(e) => setStartTime(e.target.value)}
+                  className="h-8 min-h-8 cursor-pointer bg-background/80 text-xs border-slate-600 px-2"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <p className="text-[11px] font-medium text-muted-foreground">To</p>
+              <div className="grid grid-cols-2 gap-1.5">
+                <Input
+                  id="rec-to-date"
+                  type="date"
+                  aria-label="To date"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                  className="h-8 min-h-8 cursor-pointer bg-background/80 text-xs border-slate-600 px-2"
+                />
+                <Input
+                  id="rec-to-time"
+                  type="time"
+                  aria-label="To time (optional)"
+                  value={endTime}
+                  onChange={(e) => setEndTime(e.target.value)}
+                  className="h-8 min-h-8 cursor-pointer bg-background/80 text-xs border-slate-600 px-2"
+                />
+              </div>
+            </div>
+          </div>
+
+          {error && (
+            <p className="text-xs text-red-400" role="alert">
+              {error}
+            </p>
+          )}
+
+          <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <span>
+              Showing {rows.length} of {total} segments
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <HardDrive className="h-3.5 w-3.5" />
+              MinIO-backed
+            </span>
+          </div>
+        </CardContent>
+      </Card>
+
       <Card className="bg-card/50 backdrop-blur-sm border-slate-700/50 overflow-hidden">
         <CardContent className="p-0">
-          <div className="overflow-x-auto">
+          <div className="recordings-table-scroll max-h-[15rem] overflow-auto">
             <table className="w-full text-sm">
-              <thead className="bg-muted/30 text-left text-muted-foreground">
+              <thead className="sticky top-0 z-10 bg-muted/30 text-left text-muted-foreground">
                 <tr>
-                  <th className="p-3 font-medium">Camera</th>
-                  <th className="p-3 font-medium">Start</th>
-                  <th className="p-3 font-medium">End</th>
-                  <th className="p-3 font-medium">Duration</th>
-                  <th className="p-3 font-medium">Type</th>
-                  <th className="p-3 font-medium">Size</th>
-                  <th className="p-3 font-medium">Source</th>
-                  <th className="p-3 font-medium whitespace-nowrap">Actions</th>
+                  <th className="p-2 font-medium">Camera</th>
+                  <th className="p-2 font-medium">Start</th>
+                  <th className="p-2 font-medium">End</th>
+                  <th className="p-2 font-medium">Duration</th>
+                  <th className="p-2 font-medium">Type</th>
+                  <th className="p-2 font-medium">Size</th>
+                  <th className="p-2 font-medium">Source</th>
+                  <th className="p-2 font-medium whitespace-nowrap">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.length === 0 && !loading ? (
                   <tr>
-                    <td colSpan={8} className="p-8 text-center text-muted-foreground">
+                    <td colSpan={8} className="p-6 text-center text-muted-foreground">
                       No recordings in this range. Live webcam segments appear here after upload completes.
                     </td>
                   </tr>
                 ) : (
                   rows.map((r) => (
                     <tr key={r.id} className="border-t border-slate-800/80 hover:bg-muted/10">
-                      <td className="p-3 align-top">
+                      <td className="p-2 align-top">
                         <div className="font-medium text-foreground">
                           {displayRecordingCameraName(r, cameraNameById)}
                         </div>
@@ -907,19 +890,19 @@ export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: Recordi
                           {r.object_key}
                         </div>
                       </td>
-                      <td className="p-3 align-top whitespace-nowrap">{formatDt(r.start_time)}</td>
-                      <td className="p-3 align-top whitespace-nowrap">{formatDt(r.end_time)}</td>
-                      <td className="p-3 align-top">
+                      <td className="p-2 align-top whitespace-nowrap">{formatDt(r.start_time)}</td>
+                      <td className="p-2 align-top whitespace-nowrap">{formatDt(r.end_time)}</td>
+                      <td className="p-2 align-top">
                         {r.duration_seconds != null ? `${r.duration_seconds.toFixed(0)}s` : "—"}
                       </td>
-                      <td className="p-3 align-top">
+                      <td className="p-2 align-top">
                         <Badge variant="outline" className="text-xs font-normal">
                           {r.file_type.includes("webm") ? "WebM" : r.file_type.includes("mp4") ? "MP4" : r.file_type}
                         </Badge>
                       </td>
-                      <td className="p-3 align-top">{formatBytes(r.size_bytes)}</td>
-                      <td className="p-3 align-top text-muted-foreground text-xs">{displayIngestSource(r.ingest_source)}</td>
-                      <td className="p-3 align-top">
+                      <td className="p-2 align-top">{formatBytes(r.size_bytes)}</td>
+                      <td className="p-2 align-top text-muted-foreground text-xs">{displayIngestSource(r.ingest_source)}</td>
+                      <td className="p-2 align-top">
                         <div className="flex flex-wrap items-center gap-1.5">
                           <Button
                             type="button"
@@ -962,9 +945,9 @@ export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: Recordi
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
-          <div className="overflow-x-auto">
+          <div className="recordings-table-scroll max-h-[15rem] overflow-auto">
             <table className="w-full text-sm">
-              <thead className="bg-muted/30 text-left text-muted-foreground">
+              <thead className="sticky top-0 z-10 bg-muted/30 text-left text-muted-foreground">
                 <tr>
                   <th className="p-3 font-medium">Camera</th>
                   <th className="p-3 font-medium">Type</th>

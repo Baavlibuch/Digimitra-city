@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from "react"
+import { useState, useEffect, useRef, useCallback, useMemo, type ChangeEvent, type ReactNode } from "react"
 import { useAuth } from "@/components/auth-provider"
 import { useWebcamRecording } from "@/lib/use-webcam-recording"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -214,6 +214,57 @@ function CctvPreview({ streamUrl, muted = true }: { streamUrl?: string; muted?: 
   )
 }
 
+const LOCAL_VIDEO_ACCEPT = "video/mp4,video/webm,video/quicktime,.mp4,.mov,.webm,.avi"
+
+type LocalVideoFeedEntry = { feed: CameraFeed; objectUrl: string }
+
+function LocalVideoTileBody({
+  objectUrl,
+  feed,
+  onFullscreen,
+  onDelete,
+}: {
+  objectUrl: string
+  feed: CameraFeed
+  onFullscreen: () => void
+  onDelete: () => void
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const [playing, setPlaying] = useState(true)
+
+  useEffect(() => {
+    const el = videoRef.current
+    if (!el) return
+    el.src = objectUrl
+    el.loop = true
+    if (playing) void el.play().catch(() => setPlaying(false))
+    else el.pause()
+    return () => {
+      el.pause()
+      el.removeAttribute("src")
+      el.load()
+    }
+  }, [objectUrl, playing])
+
+  return (
+    <>
+      <video
+        ref={videoRef}
+        playsInline
+        muted
+        className="absolute inset-0 w-full h-full object-cover"
+      />
+      <TileHoverChrome
+        feed={feed}
+        onFullscreen={onFullscreen}
+        onPlayPause={() => setPlaying((p) => !p)}
+        isPlaying={playing}
+        onDelete={onDelete}
+      />
+    </>
+  )
+}
+
 /**
  * Owns one getUserMedia stream, live preview, and automatic continuous MediaRecorder uploads while the stream is active.
  */
@@ -393,6 +444,18 @@ export function LiveFeedWall() {
   const [cctvConnectionStatus, setCctvConnectionStatus] = useState<CctvConnectionStatus>("idle")
   const [cctvConnectionMessage, setCctvConnectionMessage] = useState("")
   const [hasLoadedPersistedState, setHasLoadedPersistedState] = useState(false)
+  const [localVideoFeeds, setLocalVideoFeeds] = useState<LocalVideoFeedEntry[]>([])
+  const localVideoFileInputRef = useRef<HTMLInputElement>(null)
+  const localVideoFeedsRef = useRef(localVideoFeeds)
+  localVideoFeedsRef.current = localVideoFeeds
+
+  useEffect(() => {
+    return () => {
+      for (const entry of localVideoFeedsRef.current) {
+        URL.revokeObjectURL(entry.objectUrl)
+      }
+    }
+  }, [])
 
   // Auto-assign first device to feed "1" once devices load
   useEffect(() => {
@@ -467,9 +530,19 @@ export function LiveFeedWall() {
   const [searchQuery, setSearchQuery] = useState("")
   const [autoArrange, setAutoArrange] = useState(true)
   const [showAISuggestions, setShowAISuggestions] = useState(true)
-  const allFeeds = [...DEFAULT_CAMERA_FEEDS, ...customFeeds]
+  const localVideoFeedList = useMemo(() => localVideoFeeds.map((entry) => entry.feed), [localVideoFeeds])
+  const localVideoUrlByFeedId = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const entry of localVideoFeeds) map.set(entry.feed.id, entry.objectUrl)
+    return map
+  }, [localVideoFeeds])
+  const allFeeds = useMemo(
+    () => [...DEFAULT_CAMERA_FEEDS, ...customFeeds, ...localVideoFeedList],
+    [customFeeds, localVideoFeedList],
+  )
   const visibleFeeds = allFeeds.filter((feed) => {
     if (deletedFeedIds.includes(feed.id)) return false
+    if (feed.sourceType === "local_video") return true
     const isDefaultFeed = DEFAULT_CAMERA_FEEDS.some((defaultFeed) => defaultFeed.id === feed.id)
     if (!isDefaultFeed) return true
     return isFeedActive(feed, feedDeviceMap)
@@ -488,6 +561,8 @@ export function LiveFeedWall() {
   const { stream: fullscreenStream, status: fullscreenStreamStatus } = useWebcamStream(fullscreenDeviceId)
   const fullscreenFeedData = fullscreenFeed ? allFeeds.find((f) => f.id === fullscreenFeed) : undefined
   const isFullscreenCctv = fullscreenFeedData?.sourceType === "cctv"
+  const isFullscreenLocalVideo = fullscreenFeedData?.sourceType === "local_video"
+  const fullscreenLocalUrl = fullscreenFeed ? localVideoUrlByFeedId.get(fullscreenFeed) : undefined
 
   // ── Grid helpers ──
   const getGridDimensions = () => {
@@ -588,6 +663,17 @@ export function LiveFeedWall() {
     setFeedDeviceMap((prev) => ({ ...prev, [feedId]: deviceId }))
 
   const handleDeleteCamera = (feedId: string) => {
+    const localEntry = localVideoFeeds.find((entry) => entry.feed.id === feedId)
+    if (localEntry) {
+      const confirmed = window.confirm(`Are you sure you want to remove ${localEntry.feed.name}?`)
+      if (!confirmed) return
+      URL.revokeObjectURL(localEntry.objectUrl)
+      setLocalVideoFeeds((prev) => prev.filter((entry) => entry.feed.id !== feedId))
+      setSelectedFeeds((prev) => prev.filter((id) => id !== feedId))
+      setFullscreenFeed((prev) => (prev === feedId ? null : prev))
+      return
+    }
+
     const feedToDelete = allFeeds.find((feed) => feed.id === feedId)
     const confirmed = window.confirm(
       `Are you sure you want to delete ${feedToDelete?.name ?? "this camera"}?`
@@ -630,6 +716,32 @@ export function LiveFeedWall() {
       setSelectedWebcamDeviceId(devices[0].deviceId)
     }
   }, [devices, selectedWebcamDeviceId])
+
+  const handleLocalVideoFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ""
+    if (!file) return
+    if (!file.type.startsWith("video/")) {
+      window.alert("Please select a video file.")
+      return
+    }
+
+    const objectUrl = URL.createObjectURL(file)
+    const baseName = file.name.replace(/\.[^.]+$/, "") || "Demo video"
+    const feed: CameraFeed = {
+      id: `local-video-${Date.now()}`,
+      name: baseName,
+      location: "Local file",
+      status: "online",
+      lastActivity: "Local video",
+      priority: 3,
+      isRecording: false,
+      hasAudio: false,
+      resolution: "1080p",
+      sourceType: "local_video",
+    }
+    setLocalVideoFeeds((prev) => [...prev, { feed, objectUrl }])
+  }
 
   const nextCustomFeedId = () => {
     const maxId = allFeeds.reduce((max, feed) => {
@@ -755,6 +867,21 @@ export function LiveFeedWall() {
           <p className="text-muted-foreground">Smart grid layout with AI-powered suggestions</p>
         </div>
         <div className="flex items-center gap-3">
+          <input
+            ref={localVideoFileInputRef}
+            type="file"
+            accept={LOCAL_VIDEO_ACCEPT}
+            className="hidden"
+            onChange={handleLocalVideoFileChange}
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            className="bg-transparent"
+            onClick={() => localVideoFileInputRef.current?.click()}
+          >
+            CCTV
+          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -907,7 +1034,14 @@ export function LiveFeedWall() {
             <CardContent className="p-0">
               {/* Video area */}
               <div className="relative aspect-video bg-black rounded-t-lg overflow-hidden">
-                {feed.sourceType === "cctv" ? (
+                {feed.sourceType === "local_video" ? (
+                  <LocalVideoTileBody
+                    objectUrl={localVideoUrlByFeedId.get(feed.id) ?? ""}
+                    feed={feed}
+                    onFullscreen={() => handleViewCamera(feed.id)}
+                    onDelete={() => handleDeleteCamera(feed.id)}
+                  />
+                ) : feed.sourceType === "cctv" ? (
                   <>
                     <CctvPreview streamUrl={feed.cctvStreamUrl} />
                     <TileHoverChrome
@@ -943,7 +1077,10 @@ export function LiveFeedWall() {
                 )}
 
                 {/* Placeholder when no real stream */}
-                {feed.status !== "offline" && !feedDeviceMap[feed.id] && feed.sourceType !== "cctv" && (
+                {feed.status !== "offline" &&
+                  !feedDeviceMap[feed.id] &&
+                  feed.sourceType !== "cctv" &&
+                  feed.sourceType !== "local_video" && (
                   <div className="absolute inset-0 flex items-center justify-center">
                     <div className="text-center">
                       <Camera
@@ -963,8 +1100,9 @@ export function LiveFeedWall() {
                 </div>
 
                 {/* REC badge: browser upload session for webcams; mock flag for CCTV tiles */}
-                {((feed.sourceType === "cctv" && feed.isRecording) ||
-                  (feed.sourceType !== "cctv" && activeRecordingByFeed[feed.id])) && (
+                {feed.sourceType !== "local_video" &&
+                  ((feed.sourceType === "cctv" && feed.isRecording) ||
+                    (feed.sourceType !== "cctv" && activeRecordingByFeed[feed.id])) && (
                   <div className="absolute top-2 right-2 z-10 flex items-center gap-1">
                     <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
                     <span className="text-white text-xs">REC</span>
@@ -992,24 +1130,28 @@ export function LiveFeedWall() {
               {/* Feed metadata */}
               <div className="p-3">
                 <div className="flex items-center justify-between mb-2">
-                  <h3 className="font-medium text-foreground text-sm">{feed.name}</h3>
+                  <h3 className="font-medium text-foreground text-sm">
+                    {feed.sourceType === "local_video" ? "CCTV 1" : feed.name}
+                  </h3>
                   <Badge variant={feed.status === "online" ? "default" : "destructive"} className="text-xs">
                     {feed.status}
                   </Badge>
                 </div>
                 <div className="flex items-center justify-between text-xs text-muted-foreground">
-                  <span>{feed.location}</span>
+                  <span>{feed.sourceType === "local_video" ? "Market Area" : feed.location}</span>
                   <span>{feed.resolution}</span>
                 </div>
                 <div className="flex items-center justify-between text-xs text-muted-foreground mt-1">
                   <div className="flex items-center gap-1">
                     <Clock className="w-3 h-3" />
                     <span>
-                      {feed.sourceType === "cctv"
-                        ? `Live (${feed.cctvStreamType ?? "cctv"})`
-                        : feedDeviceMap[feed.id]
-                          ? "Live (webcam)"
-                          : feed.lastActivity}
+                      {feed.sourceType === "local_video"
+                        ? "Local video"
+                        : feed.sourceType === "cctv"
+                          ? `Live (${feed.cctvStreamType ?? "cctv"})`
+                          : feedDeviceMap[feed.id]
+                            ? "Live (webcam)"
+                            : feed.lastActivity}
                     </span>
                   </div>
                   <Button
@@ -1067,12 +1209,23 @@ export function LiveFeedWall() {
                     <CctvPreview streamUrl={fullscreenFeedData.cctvStreamUrl} muted={isMuted} />
                   )}
 
-                  {fullscreenStream && !isFullscreenCctv && (
+                  {isFullscreenLocalVideo && fullscreenLocalUrl && (
+                    <video
+                      src={fullscreenLocalUrl}
+                      autoPlay
+                      loop
+                      playsInline
+                      muted={isMuted}
+                      className="absolute inset-0 w-full h-full object-cover"
+                    />
+                  )}
+
+                  {fullscreenStream && !isFullscreenCctv && !isFullscreenLocalVideo && (
                     <WebcamPreview stream={fullscreenStream} muted={isMuted} />
                   )}
 
                   {/* Status / loading overlay */}
-                  {fullscreenStreamStatus === "loading" && !isFullscreenCctv && (
+                  {fullscreenStreamStatus === "loading" && !isFullscreenCctv && !isFullscreenLocalVideo && (
                     <div className="absolute inset-0 flex items-center justify-center bg-black/70 z-10">
                       <p className="text-white text-sm">Connecting to camera…</p>
                     </div>
@@ -1086,7 +1239,10 @@ export function LiveFeedWall() {
                     />
                   )}
 
-                  {!isFullscreenCctv && fullscreenFeedData?.status !== "offline" && !feedDeviceMap[fullscreenFeed] && (
+                  {!isFullscreenCctv &&
+                    !isFullscreenLocalVideo &&
+                    fullscreenFeedData?.status !== "offline" &&
+                    !feedDeviceMap[fullscreenFeed] && (
                     <div className="absolute inset-0 flex items-center justify-center">
                       <div className="text-center">
                         <Camera className="w-24 h-24 text-green-500 mx-auto mb-4" />
