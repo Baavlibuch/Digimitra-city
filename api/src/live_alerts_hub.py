@@ -114,7 +114,7 @@ async def publish_live_alert(
 ):
     """Internal: live-detection-agent → WebSocket clients."""
     _check_internal_secret(x_live_alert_secret)
-    if alert.get("type") != "live_alert":
+    if not alert.get("type"):
         alert = {**alert, "type": "live_alert"}
     sent = await manager.broadcast(alert)
     return {"ok": True, "clients": sent}

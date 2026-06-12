@@ -17,7 +17,7 @@ export default function LoginRoutePage() {
   }, [isAuthenticated, isCheckingAuth, router])
 
   return (
-    <ThemeProvider defaultTheme="dark" defaultLanguage="en">
+    <ThemeProvider defaultTheme="light" defaultLanguage="en">
       {isCheckingAuth ? <div className="min-h-screen bg-background" aria-busy="true" /> : <LoginPage />}
     </ThemeProvider>
   )

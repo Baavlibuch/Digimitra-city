@@ -35,12 +35,18 @@ export function LoadingScreen() {
 
   return (
     <div className="fixed inset-0 bg-background flex items-center justify-center z-50">
-      <Card className="bg-gradient-to-br from-blue-500/10 to-cyan-500/10 border-blue-500/20 w-96">
+      <Card className="surface-elevated w-96 border-primary/15 bg-gradient-to-br from-primary/5 to-blue-500/5">
         <CardContent className="pt-8 pb-8 text-center">
-          {/* DM Logo with animation */}
+          {/* Digimitra logo with animation */}
           <div className="mb-8">
-            <div className="w-20 h-20 mx-auto bg-gradient-to-br from-blue-500 to-cyan-500 rounded-2xl flex items-center justify-center mb-4 animate-pulse">
-              <span className="text-2xl font-bold text-white">DM</span>
+            <div className="mx-auto mb-4 h-20 w-20 animate-pulse overflow-hidden rounded-2xl shadow-sm">
+              <img
+                src="/digimitra-logo.jpeg"
+                alt="Digimitra logo"
+                width={80}
+                height={80}
+                className="h-full w-full object-cover"
+              />
             </div>
             <h1 className="text-2xl font-bold text-foreground mb-2">Digimitra</h1>
             <p className="text-sm text-muted-foreground">AI Surveillance System</p>

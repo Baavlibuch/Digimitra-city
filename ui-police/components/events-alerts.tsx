@@ -383,26 +383,26 @@ export function EventsAlerts() {
   const getSeverityColor = (severity: string) => {
     switch (severity) {
       case "critical":
-        return "bg-red-500/20 text-red-400 border-red-500/30"
+        return "bg-red-100 text-red-700 border-red-300 font-semibold"
       case "high":
-        return "bg-orange-500/20 text-orange-400 border-orange-500/30"
+        return "bg-orange-100 text-orange-700 border-orange-300 font-semibold"
       case "medium":
-        return "bg-yellow-500/20 text-yellow-400 border-yellow-500/30"
+        return "bg-amber-100 text-amber-800 border-amber-300 font-semibold"
       default:
-        return "bg-gray-500/20 text-gray-400 border-gray-500/30"
+        return "bg-muted text-muted-foreground border-border"
     }
   }
 
   const getStatusColor = (status: string) => {
     switch (status) {
       case "new":
-        return "bg-red-500/20 text-red-400 border-red-500/30"
+        return "bg-red-100 text-red-700 border-red-300"
       case "acknowledged":
-        return "bg-yellow-500/20 text-yellow-400 border-yellow-500/30"
+        return "bg-amber-100 text-amber-800 border-amber-300"
       case "resolved":
-        return "bg-green-500/20 text-green-400 border-green-500/30"
+        return "bg-green-100 text-green-700 border-green-300"
       default:
-        return "bg-gray-500/20 text-gray-400 border-gray-500/30"
+        return "bg-muted text-muted-foreground border-border"
     }
   }
 
@@ -471,20 +471,15 @@ export function EventsAlerts() {
           <p className="text-muted-foreground">AI-driven notifications from offline recording detections</p>
         </div>
         <div className="flex items-center gap-3">
-          <Button
-            variant="outline"
-            className="bg-transparent"
-            onClick={() => void loadDetections()}
-            disabled={loading}
-          >
+          <Button onClick={() => void loadDetections()} disabled={loading}>
             <RefreshCw className={`w-4 h-4 mr-2 ${loading ? "animate-spin" : ""}`} />
             Refresh
           </Button>
-          <Button variant="outline" className="bg-transparent">
+          <Button variant="secondary">
             <Bell className="w-4 h-4 mr-2" />
             Notifications
           </Button>
-          <Button variant="outline" className="bg-transparent">
+          <Button variant="secondary">
             <BellRing className="w-4 h-4 mr-2" />
             Live Alerts
           </Button>
@@ -492,7 +487,7 @@ export function EventsAlerts() {
       </div>
 
       {/* AI Summary Card */}
-      <Card className="bg-gradient-to-r from-purple-500/10 to-pink-500/10 border-purple-500/20">
+      <Card className="surface-panel border-purple-200 bg-gradient-to-r from-purple-50 to-pink-50">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Zap className="w-5 h-5 text-purple-400" />
@@ -502,20 +497,20 @@ export function EventsAlerts() {
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="text-center">
-              <div className="text-2xl font-bold text-red-400">{criticalCount}</div>
+              <div className="text-2xl font-bold text-red-600">{criticalCount}</div>
               <div className="text-sm text-muted-foreground">Critical Events</div>
             </div>
             <div className="text-center">
-              <div className="text-2xl font-bold text-orange-400">{highCount}</div>
+              <div className="text-2xl font-bold text-orange-600">{highCount}</div>
               <div className="text-sm text-muted-foreground">High Priority</div>
             </div>
             <div className="text-center">
-              <div className="text-2xl font-bold text-yellow-400">{mediumCount}</div>
+              <div className="text-2xl font-bold text-amber-600">{mediumCount}</div>
               <div className="text-sm text-muted-foreground">Medium Priority</div>
             </div>
           </div>
-          <div className="mt-4 p-3 bg-purple-500/10 rounded-lg">
-            <p className="text-sm text-purple-200">
+          <div className="mt-4 p-3 rounded-lg border border-purple-200/80 bg-purple-50/80">
+            <p className="text-sm text-foreground">
               <strong>AI Insight:</strong> {summaryInsight}
             </p>
           </div>
@@ -523,7 +518,7 @@ export function EventsAlerts() {
       </Card>
 
       {error && (
-        <p className="text-sm text-red-400" role="alert">
+        <p className="text-sm text-destructive" role="alert">
           {error}
         </p>
       )}
@@ -572,7 +567,6 @@ export function EventsAlerts() {
             variant={viewMode === "timeline" ? "default" : "outline"}
             size="sm"
             onClick={() => setViewMode("timeline")}
-            className={viewMode !== "timeline" ? "bg-transparent" : ""}
           >
             Timeline
           </Button>
@@ -580,7 +574,6 @@ export function EventsAlerts() {
             variant={viewMode === "clusters" ? "default" : "outline"}
             size="sm"
             onClick={() => setViewMode("clusters")}
-            className={viewMode !== "clusters" ? "bg-transparent" : ""}
           >
             Clusters
           </Button>
@@ -590,11 +583,11 @@ export function EventsAlerts() {
       {/* Action Feedback */}
       {actionFeedback && (
         <div className="fixed top-4 right-4 z-50">
-          <Card className="bg-green-500/20 border-green-500/30">
+          <Card className="border-green-300 bg-green-50 shadow-[var(--shadow-panel)]">
             <CardContent className="p-3">
               <div className="flex items-center gap-2">
-                <CheckCircle className="w-4 h-4 text-green-400" />
-                <span className="text-sm text-green-400">{actionFeedback.message}</span>
+                <CheckCircle className="w-4 h-4 text-green-600" />
+                <span className="text-sm text-green-800">{actionFeedback.message}</span>
               </div>
             </CardContent>
           </Card>
@@ -603,7 +596,7 @@ export function EventsAlerts() {
 
       {/* Playback — same pattern as recordings-history.tsx */}
       {playbackUrl && activeRecordingId && (
-        <Card className="bg-slate-900/40 border-cyan-500/20">
+        <Card className="surface-panel border-primary/20">
           <CardHeader className="pb-2">
             <CardTitle className="text-base">Event Playback</CardTitle>
             <CardDescription className="text-xs">
@@ -633,7 +626,7 @@ export function EventsAlerts() {
       {viewMode === "clusters" && (
         <div className="space-y-4">
           <h2 className="text-xl font-semibold text-foreground">AI Event Clusters</h2>
-          <Card className="bg-card/50 backdrop-blur-sm border-slate-700/50">
+          <Card className="surface-panel">
             <CardContent className="py-12 text-center">
               <AlertTriangle className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
               <p className="text-muted-foreground">
@@ -655,8 +648,8 @@ export function EventsAlerts() {
           {filteredEvents.map((event) => (
             <Card
               key={event.id}
-              className={`bg-card/50 backdrop-blur-sm border-slate-700/50 hover:bg-card/70 transition-colors ${
-                event.severity === "critical" ? "ring-1 ring-red-500/30" : ""
+              className={`surface-panel transition-colors hover:shadow-[var(--shadow-elevated)] ${
+                event.severity === "critical" ? "ring-2 ring-red-400/50" : ""
               }`}
             >
               <CardContent className="p-4">
@@ -664,10 +657,10 @@ export function EventsAlerts() {
                   <div
                     className={`w-10 h-10 rounded-lg flex items-center justify-center ${
                       event.severity === "critical"
-                        ? "bg-red-500/20"
+                        ? "bg-red-100"
                         : event.severity === "high"
-                          ? "bg-orange-500/20"
-                          : "bg-yellow-500/20"
+                          ? "bg-orange-100"
+                          : "bg-amber-100"
                     }`}
                   >
                     {getEventIcon(event.type)}
@@ -711,7 +704,6 @@ export function EventsAlerts() {
                       <Button
                         size="sm"
                         variant="outline"
-                        className="bg-transparent"
                         onClick={(e) => {
                           e.stopPropagation()
                           handleViewCamera()
@@ -723,7 +715,6 @@ export function EventsAlerts() {
                       <Button
                         size="sm"
                         variant="outline"
-                        className="bg-transparent"
                         disabled={playbackLoadingId === event.detectionId}
                         onClick={(e) => {
                           e.stopPropagation()
@@ -748,12 +739,12 @@ export function EventsAlerts() {
                         </Button>
 
                         {showActionMenu === event.id && (
-                          <div className="absolute top-full left-0 mt-1 w-48 bg-background border border-slate-700/50 rounded-lg shadow-lg z-50">
+                          <div className="absolute top-full left-0 mt-1 w-48 rounded-lg border border-border bg-card shadow-[var(--shadow-elevated)] z-50">
                             <div className="p-1">
                               <Button
                                 size="sm"
                                 variant="ghost"
-                                className="w-full justify-start text-left hover:bg-slate-700/50"
+                                className="w-full justify-start text-left hover:bg-muted"
                                 onClick={(e) => {
                                   e.stopPropagation()
                                   handleTakeAction(event.id, "acknowledge")
@@ -765,7 +756,7 @@ export function EventsAlerts() {
                               <Button
                                 size="sm"
                                 variant="ghost"
-                                className="w-full justify-start text-left hover:bg-slate-700/50"
+                                className="w-full justify-start text-left hover:bg-muted"
                                 onClick={(e) => {
                                   e.stopPropagation()
                                   handleTakeAction(event.id, "escalate")
@@ -777,7 +768,7 @@ export function EventsAlerts() {
                               <Button
                                 size="sm"
                                 variant="ghost"
-                                className="w-full justify-start text-left hover:bg-slate-700/50"
+                                className="w-full justify-start text-left hover:bg-muted"
                                 onClick={(e) => {
                                   e.stopPropagation()
                                   handleTakeAction(event.id, "dispatch")
@@ -789,7 +780,7 @@ export function EventsAlerts() {
                               <Button
                                 size="sm"
                                 variant="ghost"
-                                className="w-full justify-start text-left hover:bg-slate-700/50"
+                                className="w-full justify-start text-left hover:bg-muted"
                                 onClick={(e) => {
                                   e.stopPropagation()
                                   handleTakeAction(event.id, "export")
@@ -801,7 +792,7 @@ export function EventsAlerts() {
                               <Button
                                 size="sm"
                                 variant="ghost"
-                                className="w-full justify-start text-left hover:bg-slate-700/50"
+                                className="w-full justify-start text-left hover:bg-muted"
                                 onClick={(e) => {
                                   e.stopPropagation()
                                   handleTakeAction(event.id, "pin")
@@ -822,7 +813,7 @@ export function EventsAlerts() {
           ))}
 
           {filteredEvents.length === 0 && !loading && (
-            <Card className="bg-card/50 backdrop-blur-sm border-slate-700/50">
+            <Card className="surface-panel">
               <CardContent className="py-12 text-center">
                 <AlertTriangle className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
                 <h3 className="text-lg font-medium text-foreground mb-2">No events found</h3>

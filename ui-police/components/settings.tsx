@@ -101,7 +101,7 @@ export function Settings() {
 
         <TabsContent value="general" className="space-y-6">
           {/* Appearance and Language Settings Card */}
-          <Card className="bg-card/50 backdrop-blur-sm border-slate-700/50">
+          <Card className="surface-panel">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Palette className="w-5 h-5 text-purple-500" />
@@ -175,7 +175,7 @@ export function Settings() {
           </Card>
 
           {/* Interface Settings Card */}
-          <Card className="bg-card/50 backdrop-blur-sm border-slate-700/50">
+          <Card className="surface-panel">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Monitor className="w-5 h-5 text-blue-500" />
@@ -226,7 +226,7 @@ export function Settings() {
         </TabsContent>
 
         <TabsContent value="cameras" className="space-y-6">
-          <Card className="bg-card/50 backdrop-blur-sm border-slate-700/50">
+          <Card className="surface-panel">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Camera className="w-5 h-5 text-green-500" />
@@ -301,7 +301,7 @@ export function Settings() {
         </TabsContent>
 
         <TabsContent value="ai" className="space-y-6">
-          <Card className="bg-card/50 backdrop-blur-sm border-slate-700/50">
+          <Card className="surface-panel">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Zap className="w-5 h-5 text-purple-500" />
@@ -361,7 +361,7 @@ export function Settings() {
         </TabsContent>
 
         <TabsContent value="storage" className="space-y-6">
-          <Card className="bg-card/50 backdrop-blur-sm border-slate-700/50">
+          <Card className="surface-panel">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <HardDrive className="w-5 h-5 text-orange-500" />
@@ -435,7 +435,7 @@ export function Settings() {
         </TabsContent>
 
         <TabsContent value="security" className="space-y-6">
-          <Card className="bg-card/50 backdrop-blur-sm border-slate-700/50">
+          <Card className="surface-panel">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Shield className="w-5 h-5 text-red-500" />

@@ -8,7 +8,7 @@ import threading
 import time
 from typing import Dict, Optional
 
-from alert_client import publish_alert
+from alert_client import publish_alert, publish_scene_status
 from detector import run_detection
 from frame_source import (
     FRAME_REGISTRY,
@@ -17,6 +17,7 @@ from frame_source import (
     VideoFileFrameSource,
 )
 from shared.live_rules import LiveRuleEngine
+from shared.live_scene_status import derive_scene_status
 from tracker import CameraTracker
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,7 @@ class CameraPipeline:
         self._rules = rule_engine or LiveRuleEngine()
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
+        self._last_scene_status: Optional[str] = None
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -80,6 +82,11 @@ class CameraPipeline:
                 alerts = self._rules.evaluate(self.camera_id, tracks)
                 for alert in alerts:
                     publish_alert(alert.to_dict())
+
+                scene = derive_scene_status(alerts)
+                if scene.scene_status != self._last_scene_status:
+                    publish_scene_status(scene.to_ws_payload(self.camera_id))
+                    self._last_scene_status = scene.scene_status
             except Exception:
                 logger.exception("Pipeline error camera=%s", self.camera_id)
             time.sleep(0.02)

@@ -1,8 +1,48 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
+@custom-variant dark (&:is(.dark *));
+
 :root {
-  /* Updated to AI-first dark theme with blue/cyan accents */
+  /* Layered enterprise light — page / panel / input hierarchy (Defender / Azure style) */
+  --background: oklch(0.968 0.007 247);
+  --foreground: oklch(0.28 0.03 247);
+  --card: oklch(0.995 0.003 247);
+  --card-foreground: oklch(0.28 0.03 247);
+  --popover: oklch(0.995 0.003 247);
+  --popover-foreground: oklch(0.28 0.03 247);
+  --primary: oklch(0.488 0.19 252);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.942 0.012 247);
+  --secondary-foreground: oklch(0.35 0.03 247);
+  --muted: oklch(0.955 0.009 247);
+  --muted-foreground: oklch(0.48 0.03 247);
+  --accent: oklch(0.94 0.02 247);
+  --accent-foreground: oklch(0.28 0.03 247);
+  --destructive: oklch(0.52 0.22 25);
+  --destructive-foreground: oklch(0.99 0 0);
+  --border: oklch(0.885 0.014 247);
+  --input: oklch(1 0 0);
+  --ring: oklch(0.488 0.19 252);
+  --chart-1: oklch(0.488 0.19 252);
+  --chart-2: oklch(0.58 0.14 180);
+  --chart-3: oklch(0.52 0.11 145);
+  --chart-4: oklch(0.55 0.16 300);
+  --chart-5: oklch(0.58 0.14 60);
+  --radius: 0.625rem;
+  --sidebar: oklch(0.985 0.005 247);
+  --sidebar-foreground: oklch(0.28 0.03 247);
+  --sidebar-primary: oklch(0.488 0.19 252);
+  --sidebar-primary-foreground: oklch(0.99 0 0);
+  --sidebar-accent: oklch(0.94 0.02 247);
+  --sidebar-accent-foreground: oklch(0.28 0.03 247);
+  --sidebar-border: oklch(0.885 0.014 247);
+  --sidebar-ring: oklch(0.488 0.19 252);
+  --shadow-panel: 0 1px 2px rgb(15 23 42 / 0.05), 0 1px 3px rgb(15 23 42 / 0.08);
+  --shadow-elevated: 0 1px 2px rgb(15 23 42 / 0.06), 0 4px 12px rgb(15 23 42 / 0.08);
+}
+
+.dark {
   --background: oklch(0.05 0 0);
   --foreground: oklch(0.98 0 0);
   --card: oklch(0.08 0 0);
@@ -27,7 +67,6 @@
   --chart-3: oklch(0.75 0.15 120);
   --chart-4: oklch(0.6 0.3 300);
   --chart-5: oklch(0.65 0.25 60);
-  --radius: 0.625rem;
   --sidebar: oklch(0.06 0 0);
   --sidebar-foreground: oklch(0.95 0 0);
   --sidebar-primary: oklch(0.65 0.25 240);
@@ -36,13 +75,14 @@
   --sidebar-accent-foreground: oklch(0.95 0 0);
   --sidebar-border: oklch(0.18 0 0);
   --sidebar-ring: oklch(0.65 0.25 240);
+  --shadow-panel: 0 1px 2px rgb(0 0 0 / 0.2);
+  --shadow-elevated: 0 4px 12px rgb(0 0 0 / 0.25);
 }
 
 @theme inline {
   --font-sans: var(--font-inter);
   --font-mono: var(--font-geist-mono);
 
-  /* Fixed color mappings to use proper Tailwind v4 syntax */
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -83,29 +123,65 @@
 
 @layer base {
   * {
-    /* Updated to use standard Tailwind border classes */
-    @apply border-slate-800 outline-ring/50;
+    @apply border-border outline-ring/50;
   }
   body {
-    /* Removed @apply dark and use direct background/text colors */
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground antialiased;
   }
 
-  /* Add subtle glow effects for AI aesthetic */
   .glow-blue {
-    box-shadow: 0 0 20px rgba(59, 130, 246, 0.3);
+    box-shadow: 0 0 16px rgba(59, 130, 246, 0.15);
   }
 
   .glow-cyan {
-    box-shadow: 0 0 20px rgba(6, 182, 212, 0.3);
+    box-shadow: 0 0 16px rgba(6, 182, 212, 0.15);
+  }
+}
+
+@layer components {
+  .surface-panel {
+    @apply bg-card text-card-foreground rounded-xl border border-border/80;
+    box-shadow: var(--shadow-panel);
+  }
+
+  .surface-elevated {
+    @apply bg-card text-card-foreground rounded-xl border border-border/80;
+    box-shadow: var(--shadow-elevated);
+  }
+
+  .surface-inset {
+    @apply rounded-lg border border-border/70 bg-muted/50;
+  }
+
+  .filter-pill {
+    @apply inline-flex h-7 items-center rounded-full border border-border bg-card px-3 text-xs font-medium text-foreground shadow-xs transition-colors hover:bg-muted;
+  }
+
+  .filter-pill-active {
+    @apply border-primary/35 bg-primary/10 text-primary hover:bg-primary/15;
+  }
+
+  .enterprise-table thead {
+    @apply border-b border-border bg-muted/75;
+  }
+
+  .enterprise-table thead th {
+    @apply px-2 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-muted-foreground;
+  }
+
+  .enterprise-table tbody tr {
+    @apply border-b border-border/60 transition-colors hover:bg-muted/45;
+  }
+
+  .enterprise-table tbody td {
+    @apply p-2 align-top;
   }
 }
 
 @layer utilities {
-  /* Recordings page table scroll areas — dark thumb, transparent track (Chromium + Firefox) */
   .recordings-table-scroll {
     scrollbar-width: thin;
-    scrollbar-color: rgb(71 85 105 / 0.88) transparent;
+    scrollbar-color: rgb(148 163 184 / 0.75) transparent;
   }
 
   .recordings-table-scroll::-webkit-scrollbar {
@@ -118,11 +194,11 @@
   }
 
   .recordings-table-scroll::-webkit-scrollbar-thumb {
-    background-color: rgb(71 85 105 / 0.88);
+    background-color: rgb(148 163 184 / 0.75);
     border-radius: 9999px;
   }
 
   .recordings-table-scroll::-webkit-scrollbar-thumb:hover {
-    background-color: rgb(100 116 139 / 0.95);
+    background-color: rgb(100 116 139 / 0.9);
   }
 }

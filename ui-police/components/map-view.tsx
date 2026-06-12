@@ -139,7 +139,7 @@ export function MapView() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Map Area */}
         <div className="lg:col-span-2">
-          <Card className="bg-card/50 backdrop-blur-sm border-slate-700/50">
+          <Card className="surface-panel">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <MapPin className="w-5 h-5 text-blue-500" />
@@ -148,7 +148,7 @@ export function MapView() {
             </CardHeader>
             <CardContent>
               {/* Mock Map Container */}
-              <div className="relative w-full h-96 bg-muted/20 rounded-lg border border-slate-600/30 overflow-hidden">
+              <div className="relative w-full h-96 bg-muted/40 rounded-lg border border-border overflow-hidden">
                 {/* Map Background */}
                 <div className="absolute inset-0 bg-gradient-to-br from-slate-800 to-slate-900">
                   <div className="absolute inset-0 opacity-20">
@@ -195,7 +195,7 @@ export function MapView() {
         {/* Camera List & Live Feed */}
         <div className="space-y-6">
           {/* Camera List */}
-          <Card className="bg-card/50 backdrop-blur-sm border-slate-700/50">
+          <Card className="surface-panel">
             <CardHeader>
               <CardTitle className="flex items-center justify-between">
                 <span>Camera List</span>
@@ -210,7 +210,7 @@ export function MapView() {
                     className={`p-3 rounded-lg border cursor-pointer transition-colors ${
                       selectedCamera?.id === camera.id
                         ? "bg-blue-500/20 border-blue-500/50"
-                        : "bg-muted/30 border-slate-600/30 hover:bg-muted/50"
+                        : "bg-muted/50 border-border hover:bg-muted"
                     }`}
                     onClick={() => setSelectedCamera(camera)}
                   >
@@ -232,7 +232,7 @@ export function MapView() {
 
           {/* Live Feed */}
           {selectedCamera && (
-            <Card className="bg-card/50 backdrop-blur-sm border-slate-700/50">
+            <Card className="surface-panel">
               <CardHeader>
                 <div className="flex items-center justify-between">
                   <CardTitle className="flex items-center gap-2">
@@ -299,7 +299,7 @@ export function MapView() {
                   <Button size="sm" className="flex-1">
                     Pin to Dashboard
                   </Button>
-                  <Button size="sm" variant="outline" className="flex-1 bg-transparent">
+                  <Button size="sm" variant="secondary" className="flex-1">
                     View History
                   </Button>
                 </div>

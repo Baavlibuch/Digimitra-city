@@ -177,7 +177,7 @@ export function Dashboard({ onSignOut }: DashboardProps) {
           <>
             {/* AI Welcome Section */}
             <div className="mb-8">
-              <Card className="bg-gradient-to-r from-blue-500/10 to-cyan-500/10 border-blue-500/20">
+              <Card className="surface-panel border-primary/15 bg-gradient-to-r from-primary/5 to-blue-500/5">
                 <CardHeader>
                   <CardTitle className="text-2xl font-bold text-foreground">
                     Hi Officer, Digimitra is ready to assist.
@@ -188,43 +188,23 @@ export function Dashboard({ onSignOut }: DashboardProps) {
                 </CardHeader>
                 <CardContent>
                   <div className="flex flex-wrap gap-3">
-                    <Button
-                      variant="outline"
-                      className="border-cyan-500/30 hover:bg-cyan-500/10 bg-transparent"
-                      onClick={() => handleNavSection("recordings")}
-                    >
+                    <Button variant="secondary" onClick={() => handleNavSection("recordings")}>
                       <Clapperboard className="w-4 h-4 mr-2" />
                       Recording history
                     </Button>
-                    <Button
-                      variant="outline"
-                      className="border-green-500/30 hover:bg-green-500/10 bg-transparent"
-                      onClick={() => handleNavSection("search")}
-                    >
+                    <Button variant="secondary" onClick={() => handleNavSection("search")}>
                       <Mic className="w-4 h-4 mr-2" />
                       Voice Command
                     </Button>
-                    <Button
-                      variant="outline"
-                      className="border-blue-500/30 hover:bg-blue-500/10 bg-transparent"
-                      onClick={() => handleNavSection("map")}
-                    >
+                    <Button variant="secondary" onClick={() => handleNavSection("map")}>
                       <MapPin className="w-4 h-4 mr-2" />
                       Show Map
                     </Button>
-                    <Button
-                      variant="outline"
-                      className="border-blue-500/30 hover:bg-blue-500/10 bg-transparent"
-                      onClick={() => handleNavSection("events")}
-                    >
+                    <Button variant="secondary" onClick={() => handleNavSection("events")}>
                       <Calendar className="w-4 h-4 mr-2" />
                       Open Events
                     </Button>
-                    <Button
-                      variant="outline"
-                      className="border-blue-500/30 hover:bg-blue-500/10 bg-transparent"
-                      onClick={() => handleNavSection("search")}
-                    >
+                    <Button onClick={() => handleNavSection("search")}>
                       <Search className="w-4 h-4 mr-2" />
                       AI Operator
                     </Button>
@@ -236,7 +216,7 @@ export function Dashboard({ onSignOut }: DashboardProps) {
             {/* ... existing stats and events code ... */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
               {stats.map((stat, index) => (
-                <Card key={index} className="bg-card/50 backdrop-blur-sm border-slate-700/50">
+                <Card key={index} className="surface-panel">
                   <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                     <CardTitle className="text-sm font-medium text-muted-foreground">{stat.label}</CardTitle>
                     <stat.icon
@@ -260,7 +240,7 @@ export function Dashboard({ onSignOut }: DashboardProps) {
             </div>
 
             {/* Recent Events */}
-            <Card className="bg-card/50 backdrop-blur-sm border-slate-700/50">
+            <Card className="surface-panel">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <AlertTriangle className="w-5 h-5 text-yellow-500" />
@@ -271,7 +251,7 @@ export function Dashboard({ onSignOut }: DashboardProps) {
               <CardContent>
                 <div className="space-y-4">
                   {recentEvents.map((event) => (
-                    <div key={event.id} className="flex items-center justify-between p-3 rounded-lg bg-muted/30">
+                    <div key={event.id} className="flex items-center justify-between p-3 rounded-lg border border-border/60 bg-muted/40">
                       <div className="flex items-center gap-3">
                         <Badge variant="secondary">event</Badge>
                         <div>
@@ -305,7 +285,7 @@ export function Dashboard({ onSignOut }: DashboardProps) {
 
       {signOutError && (
         <div className="container mx-auto px-6 pt-4">
-          <p className="text-sm text-red-400" role="alert">
+          <p className="text-sm text-destructive" role="alert">
             {signOutError}
           </p>
         </div>

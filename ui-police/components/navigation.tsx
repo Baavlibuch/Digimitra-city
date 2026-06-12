@@ -1,7 +1,7 @@
 "use client"
 
 import { Button } from "@/components/ui/button"
-import { LayoutDashboard, Map, AlertTriangle, Monitor, Settings, Brain, LogOut, Clapperboard } from "lucide-react"
+import { LayoutDashboard, AlertTriangle, Monitor, Settings, LogOut, Clapperboard } from "lucide-react"
 
 interface NavigationProps {
   activeSection: string
@@ -13,8 +13,6 @@ interface NavigationProps {
 export function Navigation({ activeSection, onSectionChange, onSignOut, isSigningOut = false }: NavigationProps) {
   const navItems = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-    { id: "map", label: "Map View", icon: Map },
-    { id: "search", label: "AI Operator", icon: Brain }, // Changed icon to Brain for thinking model
     { id: "events", label: "Events & Alerts", icon: AlertTriangle },
     { id: "recordings", label: "Recordings", icon: Clapperboard },
     { id: "feeds", label: "Live Feeds", icon: Monitor },
@@ -22,12 +20,18 @@ export function Navigation({ activeSection, onSectionChange, onSignOut, isSignin
   ]
 
   return (
-    <nav className="border-b border-slate-700/50 bg-background/80 backdrop-blur-sm sticky top-0 z-50">
+    <nav className="sticky top-0 z-50 border-b border-border/80 bg-card/95 shadow-[var(--shadow-panel)] backdrop-blur-sm">
       <div className="container mx-auto px-6">
         <div className="flex items-center justify-between h-16">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-cyan-500 rounded-xl flex items-center justify-center">
-              <span className="text-lg font-bold text-white">DM</span>
+            <div className="w-10 h-10 shrink-0 overflow-hidden rounded-xl shadow-sm">
+              <img
+                src="/digimitra-logo.jpeg"
+                alt="Digimitra logo"
+                width={40}
+                height={40}
+                className="h-full w-full object-cover"
+              />
             </div>
             <div>
               <h1 className="text-xl font-bold text-foreground">Digimitra</h1>
@@ -42,9 +46,7 @@ export function Navigation({ activeSection, onSectionChange, onSignOut, isSignin
                 variant={activeSection === item.id ? "default" : "ghost"}
                 size="sm"
                 onClick={() => onSectionChange(item.id)}
-                className={`flex items-center gap-2 ${
-                  activeSection === item.id ? "bg-blue-500/20 text-blue-400 hover:bg-blue-500/30" : "hover:bg-muted/50"
-                }`}
+                className="flex items-center gap-2"
               >
                 <item.icon className="w-4 h-4" />
                 <span className="hidden md:inline">{item.label}</span>
@@ -55,7 +57,7 @@ export function Navigation({ activeSection, onSectionChange, onSignOut, isSignin
               size="sm"
               onClick={onSignOut}
               disabled={isSigningOut}
-              className="flex items-center gap-2 hover:bg-muted/50"
+              className="flex items-center gap-2"
             >
               {isSigningOut ? (
                 <div className="w-4 h-4 border-2 border-current/40 border-t-current rounded-full animate-spin" />

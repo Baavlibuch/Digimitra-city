@@ -65,7 +65,7 @@ export function AIAgentPanel() {
 
   return (
     <Card
-      className={`fixed bottom-6 right-6 w-96 bg-background/95 backdrop-blur-sm border-slate-700/50 shadow-xl z-50 transition-all duration-300 ${
+      className={`fixed bottom-6 right-6 w-96 surface-elevated z-50 transition-all duration-300 ${
         isMinimized ? "h-16" : "h-96"
       }`}
     >

@@ -218,6 +218,35 @@ const LOCAL_VIDEO_ACCEPT = "video/mp4,video/webm,video/quicktime,.mp4,.mov,.webm
 
 type LocalVideoFeedEntry = { feed: CameraFeed; objectUrl: string }
 
+// TEMP: Demo-only event banners for uploaded video verification.
+type DemoUploadBanner = {
+  label: string
+  badgeClass: string
+  showHighChip: boolean
+}
+
+function demoUploadVideoBanner(uploadIndex: number): DemoUploadBanner {
+  if (uploadIndex === 0) {
+    return {
+      label: "🚨 Accident Alert",
+      badgeClass: "bg-red-600/95 ring-red-400/50",
+      showHighChip: true,
+    }
+  }
+  if (uploadIndex === 1) {
+    return {
+      label: "🚨 Suspicious Activity",
+      badgeClass: "bg-red-600/95 ring-red-400/50",
+      showHighChip: true,
+    }
+  }
+  return {
+    label: "🟢 Everything Idle",
+    badgeClass: "bg-green-600/95 ring-green-400/50",
+    showHighChip: false,
+  }
+}
+
 function LocalVideoTileBody({
   objectUrl,
   feed,
@@ -534,6 +563,13 @@ export function LiveFeedWall() {
   const localVideoUrlByFeedId = useMemo(() => {
     const map = new Map<string, string>()
     for (const entry of localVideoFeeds) map.set(entry.feed.id, entry.objectUrl)
+    return map
+  }, [localVideoFeeds])
+  const localVideoUploadOrderByFeedId = useMemo(() => {
+    const map = new Map<string, number>()
+    localVideoFeeds.forEach((entry, index) => {
+      map.set(entry.feed.id, index)
+    })
     return map
   }, [localVideoFeeds])
   const allFeeds = useMemo(
@@ -875,17 +911,15 @@ export function LiveFeedWall() {
             onChange={handleLocalVideoFileChange}
           />
           <Button
-            variant="outline"
+            variant="secondary"
             size="sm"
-            className="bg-transparent"
             onClick={() => localVideoFileInputRef.current?.click()}
           >
             CCTV
           </Button>
           <Button
-            variant="outline"
+            variant="secondary"
             size="sm"
-            className="bg-transparent"
             onClick={() => {
               resetAddCameraForm()
               setAddMode("webcam")
@@ -899,12 +933,11 @@ export function LiveFeedWall() {
             variant={autoArrange ? "default" : "outline"}
             size="sm"
             onClick={() => setAutoArrange((v) => !v)}
-            className={!autoArrange ? "bg-transparent" : ""}
           >
             <Zap className="w-4 h-4 mr-2" />
             AI Auto-Arrange
           </Button>
-          <Button variant="outline" size="sm" className="bg-transparent" onClick={() => void refreshDevices()}>
+          <Button variant="secondary" size="sm" onClick={() => void refreshDevices()}>
             <RefreshCw className="w-4 h-4 mr-2" />
             Refresh Cameras
           </Button>
@@ -924,7 +957,7 @@ export function LiveFeedWall() {
 
       {/* ── AI Notifications ── */}
       {showAISuggestions && aiPanelNotifications.length > 0 && (
-        <Card className="bg-gradient-to-r from-purple-500/10 to-blue-500/10 border-purple-500/20">
+        <Card className="surface-panel border-purple-200 bg-gradient-to-r from-purple-50 to-blue-50">
           <CardHeader>
             <div className="flex items-center justify-between">
               <CardTitle className="flex items-center gap-2">
@@ -952,7 +985,7 @@ export function LiveFeedWall() {
           <CardContent>
             <div className="space-y-3">
               {aiPanelNotifications.slice(0, 2).map((n) => (
-                <div key={n.id} className="flex items-center justify-between p-3 bg-purple-500/10 rounded-lg">
+                <div key={n.id} className="flex items-center justify-between p-3 rounded-lg border border-purple-100 bg-purple-50/80">
                   <div className="flex items-center gap-3">
                     <div className="w-2 h-2 bg-purple-400 rounded-full animate-pulse" />
                     <div>
@@ -965,7 +998,7 @@ export function LiveFeedWall() {
                       size="sm"
                       variant="outline"
                       onClick={() => handleAIAction(n)}
-                      className="bg-transparent border-purple-500/30 hover:bg-purple-500/10"
+                      className="border-purple-200 hover:bg-purple-50"
                     >
                       {n.action === "zoom" ? "Zoom In" : "Focus"}
                     </Button>
@@ -1002,7 +1035,7 @@ export function LiveFeedWall() {
         </div>
         <div className="flex items-center gap-2">
           <Badge variant="secondary">{displayFeeds.length} feeds</Badge>
-          <Button variant="outline" size="sm" className="bg-transparent">
+          <Button variant="secondary" size="sm">
             <Grid3X3 className="w-4 h-4 mr-2" />
             Layout
           </Button>
@@ -1017,17 +1050,15 @@ export function LiveFeedWall() {
         {displayFeeds.map((feed) => {
           const wsAlert = liveWs.alertByCameraId.get(feed.id)
           const wsBboxes = liveWs.latestBboxesByCameraId.get(feed.id)
-          const polledAlert = alertByFeedId.get(feed.id)
+          const sceneStatus = liveWs.sceneStatusByCameraId.get(feed.id)
           const tileAlertMessage =
-            liveWsEnabled && wsAlert
-              ? wsAlert.message
-              : polledAlert?.message ?? feed.aiSuggestion
+            wsAlert?.message ?? sceneStatus?.message ?? feed.aiSuggestion
           const hasLiveHighlight = Boolean(liveWsEnabled && wsAlert)
 
           return (
           <Card
             key={feed.id}
-            className={`bg-card/50 backdrop-blur-sm border-slate-700/50 hover:bg-card/70 transition-colors relative ${
+            className={`surface-panel transition-shadow hover:shadow-[var(--shadow-elevated)] relative ${
               feed.status === "alert" || hasLiveHighlight ? "ring-2 ring-red-500/50" : ""
             }`}
           >
@@ -1098,6 +1129,36 @@ export function LiveFeedWall() {
                 <div className="absolute top-2 left-2 z-10">
                   <div className={`w-3 h-3 rounded-full ${getStatusColor(feed.status)}`} />
                 </div>
+
+                {/* TEMP: Hardcoded idle banner for UI verification before dynamic scene status integration. */}
+                {feed.sourceType !== "local_video" && (
+                  <div className="absolute top-2 left-8 z-20 pointer-events-none">
+                    <span className="inline-flex items-center rounded-md bg-green-600/95 px-2 py-0.5 text-[11px] font-medium text-white shadow-md ring-1 ring-green-400/50 backdrop-blur-sm">
+                      Everything Idle
+                    </span>
+                  </div>
+                )}
+
+                {/* TEMP: Demo-only event banners for uploaded video verification. */}
+                {feed.sourceType === "local_video" && (() => {
+                  const uploadIndex = localVideoUploadOrderByFeedId.get(feed.id) ?? 0
+                  const banner = demoUploadVideoBanner(uploadIndex)
+                  return (
+                    <div className="absolute top-2 left-8 z-20 pointer-events-none">
+                      <span
+                        className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-semibold text-white shadow-md ring-1 backdrop-blur-sm ${banner.badgeClass}`}
+                      >
+                        {banner.showHighChip && (
+                          <span className="rounded bg-red-950/70 px-1 py-px text-[9px] font-bold uppercase tracking-wide">
+                            🔴 HIGH
+                          </span>
+                        )}
+                        {banner.showHighChip && <span className="opacity-75">•</span>}
+                        <span>{banner.label}</span>
+                      </span>
+                    </div>
+                  )
+                })()}
 
                 {/* REC badge: browser upload session for webcams; mock flag for CCTV tiles */}
                 {feed.sourceType !== "local_video" &&
@@ -1173,7 +1234,7 @@ export function LiveFeedWall() {
         {Array.from({ length: maxFeeds - displayFeeds.length }).map((_, i) => (
           <Card
             key={`empty-${i}`}
-            className="bg-card/20 backdrop-blur-sm border-slate-600/30 border-dashed"
+            className="surface-inset border-dashed bg-muted/30"
           >
             <CardContent className="p-0">
               <div className="aspect-video flex items-center justify-center">
@@ -1416,7 +1477,7 @@ export function LiveFeedWall() {
                   />
                 </div>
                 <Input placeholder="Port (optional)" value={cctvPort} onChange={(e) => setCctvPort(e.target.value)} />
-                <Button variant="outline" className="bg-transparent" onClick={() => void testCctvConnection()}>
+                <Button variant="secondary" onClick={() => void testCctvConnection()}>
                   Test Connection
                 </Button>
                 {cctvConnectionMessage && (
@@ -1443,8 +1504,7 @@ export function LiveFeedWall() {
 
           <DialogFooter>
             <Button
-              variant="outline"
-              className="bg-transparent"
+              variant="secondary"
               onClick={() => {
                 setIsAddCameraOpen(false)
                 resetAddCameraForm()

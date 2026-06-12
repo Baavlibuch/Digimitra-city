@@ -88,3 +88,24 @@ def test_websocket_receives_published_alert(client):
         )
         data = ws.receive_json()
         assert data.get("alert_type") == "wrong_way_driving"
+
+
+def test_websocket_receives_published_scene_status(client):
+    token = _make_token()
+    with client.websocket_connect(f"/api/v1/live/alerts?token={token}") as ws:
+        _ = ws.receive_json()
+        client.post(
+            "/api/v1/internal/live-alerts/publish",
+            json={
+                "type": "live_scene_status",
+                "camera_id": "1",
+                "scene_status": "everything_idle",
+                "message": "Everything Idle",
+                "timestamp": "2026-06-11T12:00:00Z",
+            },
+            headers={"X-Live-Alert-Secret": "live-internal-dev-secret"},
+        )
+        data = ws.receive_json()
+        assert data.get("type") == "live_scene_status"
+        assert data.get("scene_status") == "everything_idle"
+        assert data.get("message") == "Everything Idle"

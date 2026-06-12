@@ -61,7 +61,7 @@ export default function VerifyPage() {
   }
 
   return (
-    <ThemeProvider defaultTheme="dark" defaultLanguage="en">
+    <ThemeProvider defaultTheme="light" defaultLanguage="en">
       <div className="min-h-screen bg-linear-to-br from-slate-900 via-blue-900 to-slate-900 flex items-center justify-center p-4">
         <div className="w-full max-w-md">
           <div className="text-center mb-8">

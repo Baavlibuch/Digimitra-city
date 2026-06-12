@@ -217,7 +217,7 @@ export function TextSearch() {
       </div>
 
       <Card
-        className={`${isVoiceActive ? "bg-gradient-to-r from-green-500/20 to-blue-500/20 border-green-500/40" : "bg-gradient-to-r from-blue-500/10 to-cyan-500/10 border-blue-500/20"} transition-all duration-500`}
+        className={`surface-panel transition-all duration-500 ${isVoiceActive ? "border-green-300 bg-gradient-to-r from-green-50 to-blue-50" : "border-primary/15 bg-gradient-to-r from-primary/5 to-blue-500/5"}`}
       >
         <CardContent className="pt-6">
           {isVoiceActive && (
@@ -269,20 +269,20 @@ export function TextSearch() {
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Ask AI Operator anything... e.g., 'Show me cameras near the hospital entrance'"
-                className="pl-10 h-12 text-lg bg-background/50 border-slate-700/50"
+                className="pl-10 h-12 text-lg"
                 onKeyPress={(e) => e.key === "Enter" && handleSearch()}
               />
             </div>
             <div className="relative">
               <Button
                 onClick={() => setShowAttachmentMenu(!showAttachmentMenu)}
-                className="h-12 px-4 bg-purple-500/20 border border-purple-500/30 text-purple-400 hover:bg-purple-500/30"
-                variant="outline"
+                className="h-12 px-4"
+                variant="secondary"
               >
                 <Paperclip className="w-4 h-4" />
               </Button>
               {showAttachmentMenu && (
-                <div className="absolute top-full right-0 mt-1 w-48 bg-background border border-slate-700/50 rounded-lg shadow-lg z-10">
+                <div className="absolute top-full right-0 mt-1 w-48 rounded-lg border border-border bg-card shadow-[var(--shadow-elevated)] z-10">
                   <div className="p-1">
                     <label className="block">
                       <input
@@ -295,7 +295,7 @@ export function TextSearch() {
                       <Button
                         size="sm"
                         variant="ghost"
-                        className="w-full justify-start text-left hover:bg-slate-700/50"
+                        className="w-full justify-start text-left hover:bg-muted"
                         asChild
                       >
                         <span>
@@ -315,7 +315,7 @@ export function TextSearch() {
                       <Button
                         size="sm"
                         variant="ghost"
-                        className="w-full justify-start text-left hover:bg-slate-700/50"
+                        className="w-full justify-start text-left hover:bg-muted"
                         asChild
                       >
                         <span>
@@ -331,8 +331,8 @@ export function TextSearch() {
             <Button
               onClick={handleVoiceInput}
               disabled={isVoiceActive}
-              className={`h-12 px-4 ${isVoiceActive ? "bg-green-500 hover:bg-green-600" : "bg-green-500/20 border border-green-500/30 text-green-400 hover:bg-green-500/30"}`}
-              variant={isVoiceActive ? "default" : "outline"}
+              className={`h-12 px-4 ${isVoiceActive ? "bg-green-600 hover:bg-green-700 text-white" : ""}`}
+              variant={isVoiceActive ? "default" : "secondary"}
             >
               <Mic className="w-4 h-4" />
             </Button>
@@ -340,7 +340,7 @@ export function TextSearch() {
               <Button
                 onClick={handleSearch}
                 disabled={!query.trim() || isSearching}
-                className="h-12 px-6 bg-blue-500 hover:bg-blue-600"
+                className="h-12 px-6"
               >
                 {isSearching ? (
                   <div className="flex items-center gap-2">
@@ -367,7 +367,7 @@ export function TextSearch() {
                     variant="outline"
                     size="sm"
                     onClick={() => setQuery(suggestion)}
-                    className="text-xs border-blue-500/30 hover:bg-blue-500/10 bg-transparent"
+                    className="filter-pill text-xs"
                   >
                     {suggestion}
                   </Button>
@@ -381,7 +381,7 @@ export function TextSearch() {
       {hasSearched && (
         <div className="space-y-4">
           {isSearching ? (
-            <Card className="bg-card/50 backdrop-blur-sm border-border/50">
+            <Card className="surface-panel">
               <CardContent className="py-12">
                 <div className="text-center">
                   <div className="w-8 h-8 border-2 border-blue-500/30 border-t-blue-500 rounded-full animate-spin mx-auto mb-4" />
@@ -398,7 +398,7 @@ export function TextSearch() {
                     Found {results.length} results for "{query}"
                   </p>
                 </div>
-                <Button variant="outline" size="sm" className="bg-transparent">
+                <Button variant="secondary" size="sm">
                   <Filter className="w-4 h-4 mr-2" />
                   Filter
                 </Button>
@@ -416,7 +416,7 @@ export function TextSearch() {
                       .map((result) => (
                         <Card
                           key={result.id}
-                          className="bg-card/50 backdrop-blur-sm border-slate-700/50 hover:bg-card/70 transition-colors cursor-pointer"
+                          className="surface-panel transition-shadow hover:shadow-[var(--shadow-elevated)] cursor-pointer"
                         >
                           <CardContent className="p-4">
                             <div className="flex items-start gap-3">
@@ -454,7 +454,7 @@ export function TextSearch() {
                       .map((result) => (
                         <Card
                           key={result.id}
-                          className="bg-card/50 backdrop-blur-sm border-slate-700/50 hover:bg-card/70 transition-colors cursor-pointer"
+                          className="surface-panel transition-shadow hover:shadow-[var(--shadow-elevated)] cursor-pointer"
                         >
                           <CardContent className="p-4">
                             <div className="flex items-start gap-3">
@@ -495,7 +495,7 @@ export function TextSearch() {
                       .map((result) => (
                         <Card
                           key={result.id}
-                          className="bg-card/50 backdrop-blur-sm border-slate-700/50 hover:bg-card/70 transition-colors cursor-pointer"
+                          className="surface-panel transition-shadow hover:shadow-[var(--shadow-elevated)] cursor-pointer"
                         >
                           <CardContent className="p-4">
                             <div className="flex items-start gap-3">
@@ -524,14 +524,14 @@ export function TextSearch() {
               </div>
 
               {results.length === 0 && (
-                <Card className="bg-card/50 backdrop-blur-sm border-slate-700/50">
+                <Card className="surface-panel">
                   <CardContent className="py-12 text-center">
                     <Search className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
                     <h3 className="text-lg font-medium text-foreground mb-2">No results found</h3>
                     <p className="text-muted-foreground mb-4">
                       Try adjusting your search query or use voice commands for better results.
                     </p>
-                    <Button variant="outline" onClick={() => setQuery("")} className="bg-transparent">
+                    <Button variant="secondary" onClick={() => setQuery("")}>
                       Clear Search
                     </Button>
                   </CardContent>

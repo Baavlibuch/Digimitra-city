@@ -1,10 +1,17 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Play, RefreshCw, Search, Video, HardDrive, Trash2 } from "lucide-react"
+import { Play, RefreshCw, Search, Video, Trash2, List } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import {
   Select,
   SelectContent,
@@ -149,6 +156,65 @@ export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: Recordi
   const [playbackDetectionsLoading, setPlaybackDetectionsLoading] = useState(false)
   const [playbackEntryContext, setPlaybackEntryContext] = useState<PlaybackEntryContext>({ mode: "normal" })
   const [activeSegmentStart, setActiveSegmentStart] = useState<string | null>(null)
+  const recordingsTableScrollRef = useRef<HTMLDivElement>(null)
+  const recordingFiltersCardRef = useRef<HTMLDivElement>(null)
+  const [pairedPanelHeight, setPairedPanelHeight] = useState<number | null>(null)
+  const hideRecordingsSourceRef = useRef(false)
+  const [hideRecordingsSource, setHideRecordingsSource] = useState(false)
+  hideRecordingsSourceRef.current = hideRecordingsSource
+
+  const syncPairedPanelHeight = useCallback(() => {
+    const el = recordingFiltersCardRef.current
+    if (!el) return
+    if (window.matchMedia("(min-width: 1024px)").matches) {
+      setPairedPanelHeight(el.offsetHeight)
+    } else {
+      setPairedPanelHeight(null)
+    }
+  }, [])
+
+  useEffect(() => {
+    const el = recordingFiltersCardRef.current
+    if (!el) return
+    syncPairedPanelHeight()
+    const ro = new ResizeObserver(() => syncPairedPanelHeight())
+    ro.observe(el)
+    window.addEventListener("resize", syncPairedPanelHeight)
+    return () => {
+      ro.disconnect()
+      window.removeEventListener("resize", syncPairedPanelHeight)
+    }
+  }, [error, loading, syncPairedPanelHeight])
+
+  const syncRecordingsTableLayout = useCallback(() => {
+    const el = recordingsTableScrollRef.current
+    if (!el) return
+    const table = el.querySelector("table")
+    if (!table) return
+    const sourceColEstimatePx = 128
+    const effectiveScrollWidth = hideRecordingsSourceRef.current
+      ? table.scrollWidth + sourceColEstimatePx
+      : table.scrollWidth
+    setHideRecordingsSource(effectiveScrollWidth > el.clientWidth + 1)
+  }, [])
+
+  useEffect(() => {
+    const el = recordingsTableScrollRef.current
+    if (!el) return
+    const table = el.querySelector("table")
+    syncRecordingsTableLayout()
+    const ro = new ResizeObserver(() => syncRecordingsTableLayout())
+    ro.observe(el)
+    if (table) ro.observe(table)
+    const vv = window.visualViewport
+    vv?.addEventListener("resize", syncRecordingsTableLayout)
+    window.addEventListener("resize", syncRecordingsTableLayout)
+    return () => {
+      ro.disconnect()
+      vv?.removeEventListener("resize", syncRecordingsTableLayout)
+      window.removeEventListener("resize", syncRecordingsTableLayout)
+    }
+  }, [rows, loading, hideRecordingsSource, syncRecordingsTableLayout])
 
   const filtersRef = useRef({
     cameraFilter,
@@ -551,66 +617,36 @@ export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: Recordi
     !showSemanticIndexWarning
 
   return (
-    <div className="space-y-6">
-      <Card className="bg-card/50 backdrop-blur-sm border-slate-700/50">
-        <CardHeader className="pb-2">
+    <div className="space-y-4">
+      <div className="grid items-start gap-4 lg:grid-cols-12 lg:gap-5">
+      <Card
+        className="surface-panel flex flex-col gap-0 overflow-hidden py-0 lg:col-span-4"
+        style={
+          pairedPanelHeight != null
+            ? { height: pairedPanelHeight, maxHeight: pairedPanelHeight }
+            : undefined
+        }
+      >
+        <CardHeader className="shrink-0 space-y-1 px-4 pb-1 pt-4">
           <CardTitle className="flex items-center gap-2 text-base">
             <Search className="h-4 w-4 text-amber-400" />
             Semantic visual search
           </CardTitle>
-          <CardDescription className="text-xs">
-            Natural-language scene search (CLIP embeddings on sampled frames). Uses the same sparse sampling as offline
-            AI; results open signed playback and seek to the moment.
+          <CardDescription className="text-xs leading-snug">
+            CLIP scene search — opens playback and seeks to the match.
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-3">
-          {semanticStatusLoading && (
-            <p className="text-xs text-muted-foreground" role="status">
-              Checking semantic search capability on the server…
-            </p>
-          )}
-          {semanticStatusFetchError && (
-            <p className="text-xs text-amber-200/90 flex flex-wrap items-center gap-x-2 gap-y-1" role="alert">
-              <span>{semanticStatusFetchError}</span>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-7 px-2 text-xs text-amber-100 hover:bg-amber-500/10"
-                disabled={semanticStatusLoading}
-                onClick={() => {
-                  void refreshSemanticStatus(getSurveillanceAccessTokenOrNull())
-                }}
-              >
-                Retry status
-              </Button>
-            </p>
-          )}
-          {showSemanticNotConfigured && (
-            <p className="text-xs text-muted-foreground" role="status">
-              {semanticStatus!.detail?.trim() || "Semantic search is not configured for this server."}
-            </p>
-          )}
-          {showSemanticIndexWarning && (
-            <p className="text-xs text-amber-200/85" role="status">
-              {semanticStatus!.detail}
-            </p>
-          )}
-          {showSemanticWarming && (
-            <p className="text-xs text-muted-foreground" role="status">
-              Semantic search index is still starting on the server…
-            </p>
-          )}
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+        <CardContent className="flex min-h-0 flex-1 flex-col gap-2 px-4 pb-3 pt-0">
+          <div className="flex shrink-0 flex-col gap-2">
             <Input
               type="search"
-              placeholder='Try: hand, crowd, bicycle near road, person sitting…'
+              placeholder="hand, crowd, bicycle…"
               value={semanticQuery}
               onChange={(e) => setSemanticQuery(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter") void runSemanticSearch()
               }}
-              className="h-10 flex-1 bg-background/80 border-slate-600 text-sm"
+              className="h-9 w-full text-sm"
               aria-label="Semantic search query"
               disabled={
                 semanticLoading ||
@@ -621,9 +657,8 @@ export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: Recordi
             />
             <Button
               type="button"
-              variant="secondary"
               size="sm"
-              className="h-10 shrink-0 border-amber-500/30 text-amber-200"
+              className="h-9 w-full shrink-0"
               disabled={
                 semanticLoading ||
                 semanticStatusLoading ||
@@ -635,14 +670,51 @@ export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: Recordi
               {semanticLoading ? "Searching…" : "Search"}
             </Button>
           </div>
-          {semanticError && (
-            <p className="text-xs text-amber-200/90" role="status">
-              {semanticError}
-            </p>
-          )}
-          {semanticHits.length > 0 && (
-            <div className="recordings-table-scroll rounded-md border border-slate-700/60 bg-muted/10 max-h-[224px] overflow-auto text-sm">
-              <ul className="divide-y divide-slate-800/80">
+          <div className="recordings-table-scroll surface-inset min-h-0 flex-1 overflow-y-auto text-sm">
+            {semanticStatusLoading && (
+              <p className="px-3 py-2 text-xs text-muted-foreground" role="status">
+                Checking semantic search capability on the server…
+              </p>
+            )}
+            {semanticStatusFetchError && (
+              <p className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2 text-xs text-amber-800" role="alert">
+                <span>{semanticStatusFetchError}</span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-xs text-amber-100 hover:bg-amber-500/10"
+                  disabled={semanticStatusLoading}
+                  onClick={() => {
+                    void refreshSemanticStatus(getSurveillanceAccessTokenOrNull())
+                  }}
+                >
+                  Retry status
+                </Button>
+              </p>
+            )}
+            {showSemanticNotConfigured && (
+              <p className="px-3 py-2 text-xs text-muted-foreground" role="status">
+                {semanticStatus!.detail?.trim() || "Semantic search is not configured for this server."}
+              </p>
+            )}
+            {showSemanticIndexWarning && (
+              <p className="px-3 py-2 text-xs text-amber-800" role="status">
+                {semanticStatus!.detail}
+              </p>
+            )}
+            {showSemanticWarming && (
+              <p className="px-3 py-2 text-xs text-muted-foreground" role="status">
+                Semantic search index is still starting on the server…
+              </p>
+            )}
+            {semanticError && (
+              <p className="px-3 py-2 text-xs text-amber-800" role="status">
+                {semanticError}
+              </p>
+            )}
+            {semanticHits.length > 0 ? (
+              <ul className="divide-y divide-border/70">
                 {semanticHits.map((h) => (
                   <li key={`${h.recording_segment_id}-${h.timestamp_offset_ms}-${h.vector_id ?? ""}`} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
                     <div className="min-w-0">
@@ -657,7 +729,7 @@ export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: Recordi
                       type="button"
                       size="sm"
                       variant="outline"
-                      className="shrink-0 border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/10"
+                      className="shrink-0"
                       onClick={() => void playFromSemantic(h)}
                     >
                       <Play className="h-3 w-3 mr-1" />
@@ -666,13 +738,150 @@ export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: Recordi
                   </li>
                 ))}
               </ul>
-            </div>
-          )}
+            ) : (
+              !semanticStatusLoading &&
+              !semanticError &&
+              !semanticStatusFetchError &&
+              !showSemanticNotConfigured &&
+              !showSemanticIndexWarning &&
+              !showSemanticWarming && (
+                <p className="px-3 py-2 text-xs text-muted-foreground">Results appear here after you search.</p>
+              )
+            )}
+          </div>
         </CardContent>
       </Card>
 
+      <div ref={recordingFiltersCardRef} className="lg:col-span-8">
+      <Card className="surface-panel h-full gap-0 py-0">
+        <CardHeader className="space-y-1 px-4 pb-1 pt-4">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Video className="h-4 w-4 text-primary" />
+            Recording history
+          </CardTitle>
+          <CardDescription className="text-xs leading-snug">
+            Quick range or date filter · signed playback URLs.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-2 px-4 pb-3 pt-0">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap gap-1.5">
+              <Button type="button" variant="secondary" size="sm" className="filter-pill h-7 px-3 text-xs" onClick={() => applyPreset("24h")}>
+                Last 24h
+              </Button>
+              <Button type="button" variant="secondary" size="sm" className="filter-pill h-7 px-3 text-xs" onClick={() => applyPreset("today")}>
+                Today
+              </Button>
+              <Button type="button" variant="ghost" size="sm" className="filter-pill h-7 px-3 text-xs" onClick={() => applyPreset("clear")}>
+                Clear
+              </Button>
+            </div>
+            <VideoFileUpload variant="compact" onUploaded={onUploaded} />
+          </div>
+
+          <div className="grid gap-2 sm:grid-cols-2">
+            <div className="space-y-1">
+              <Label className="text-[11px] text-muted-foreground">Camera</Label>
+              <Select value={cameraFilter} onValueChange={setCameraFilter}>
+                <SelectTrigger className="h-8 text-xs">
+                  <SelectValue placeholder="All cameras" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All cameras</SelectItem>
+                  {cameras.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1">
+              <Label className="text-[11px] text-muted-foreground">Object (AI)</Label>
+              <Select value={objectTypeFilter} onValueChange={setObjectTypeFilter}>
+                <SelectTrigger className="h-8 text-xs">
+                  <SelectValue placeholder="All types" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All types</SelectItem>
+                  <SelectItem value="person">person</SelectItem>
+                  <SelectItem value="bicycle">bicycle</SelectItem>
+                  <SelectItem value="car">car</SelectItem>
+                  <SelectItem value="motorcycle">motorcycle</SelectItem>
+                  <SelectItem value="bus">bus</SelectItem>
+                  <SelectItem value="truck">truck</SelectItem>
+                  <SelectItem value="backpack">backpack</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <div className="grid gap-2 sm:grid-cols-2">
+            <div className="space-y-1">
+              <Label htmlFor="rec-from-date" className="text-[11px] text-muted-foreground">
+                From date
+              </Label>
+              <Input
+                id="rec-from-date"
+                type="date"
+                aria-label="From date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="h-8 min-h-8 cursor-pointer text-xs px-2"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="rec-to-date" className="text-[11px] text-muted-foreground">
+                To date
+              </Label>
+              <Input
+                id="rec-to-date"
+                type="date"
+                aria-label="To date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                className="h-8 min-h-8 cursor-pointer text-xs px-2"
+              />
+            </div>
+          </div>
+
+          <Button
+            type="button"
+            size="sm"
+            className="h-8 w-full text-xs"
+            onClick={() => void load()}
+            disabled={loading}
+          >
+            {loading ? (
+              <span className="inline-flex items-center gap-1.5">
+                <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                Loading…
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5">
+                <RefreshCw className="h-3.5 w-3.5" />
+                Apply
+              </span>
+            )}
+          </Button>
+
+          {error && (
+            <p className="text-xs text-destructive" role="alert">
+              {error}
+            </p>
+          )}
+
+          <p className="text-xs text-muted-foreground">
+            Showing {rows.length} of {total} segments
+          </p>
+        </CardContent>
+      </Card>
+      </div>
+      </div>
+
       {playbackUrl && activeRecordingId && (
-        <Card className="bg-slate-900/40 border-cyan-500/20">
+        <Card className="surface-panel border-primary/20">
           <CardHeader className="pb-2">
             <CardTitle className="text-base">Playback</CardTitle>
             <CardDescription className="text-xs">
@@ -699,189 +908,32 @@ export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: Recordi
         </Card>
       )}
 
-      <Card className="bg-card/50 backdrop-blur-sm border-slate-700/50">
-        <CardHeader>
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <CardTitle className="flex items-center gap-2 text-xl">
-                <Video className="h-5 w-5 text-cyan-400" />
-                Recording history
-              </CardTitle>
-              <CardDescription>
-                Pick a quick range or choose date and time separately (larger native pickers). Playback uses short-lived
-                signed URLs.
-              </CardDescription>
-            </div>
-            <VideoFileUpload variant="compact" onUploaded={onUploaded} />
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-2 px-4 pb-3 pt-0">
-          <div className="flex flex-wrap gap-1.5">
-            <Button type="button" variant="secondary" size="sm" className="h-7 border-slate-600 px-2 text-xs" onClick={() => applyPreset("24h")}>
-              Last 24h
-            </Button>
-            <Button type="button" variant="secondary" size="sm" className="h-7 border-slate-600 px-2 text-xs" onClick={() => applyPreset("7d")}>
-              Last 7d
-            </Button>
-            <Button type="button" variant="secondary" size="sm" className="h-7 border-slate-600 px-2 text-xs" onClick={() => applyPreset("today")}>
-              Today
-            </Button>
-            <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => applyPreset("clear")}>
-              Clear
-            </Button>
-          </div>
-
-          <div className="grid gap-2 lg:grid-cols-3">
-            <div className="space-y-1">
-              <Label className="text-[11px] text-muted-foreground">Camera</Label>
-              <Select value={cameraFilter} onValueChange={setCameraFilter}>
-                <SelectTrigger className="h-8 bg-background/60 border-slate-600 text-xs">
-                  <SelectValue placeholder="All cameras" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All cameras</SelectItem>
-                  {cameras.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>
-                      {c.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-1">
-              <Label className="text-[11px] text-muted-foreground">Object (AI)</Label>
-              <Select value={objectTypeFilter} onValueChange={setObjectTypeFilter}>
-                <SelectTrigger className="h-8 bg-background/60 border-slate-600 text-xs">
-                  <SelectValue placeholder="All types" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All types</SelectItem>
-                  <SelectItem value="person">person</SelectItem>
-                  <SelectItem value="bicycle">bicycle</SelectItem>
-                  <SelectItem value="car">car</SelectItem>
-                  <SelectItem value="motorcycle">motorcycle</SelectItem>
-                  <SelectItem value="bus">bus</SelectItem>
-                  <SelectItem value="truck">truck</SelectItem>
-                  <SelectItem value="backpack">backpack</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="flex items-end">
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                className="h-8 w-full border-slate-600 text-xs"
-                onClick={() => void load()}
-                disabled={loading}
-              >
-                {loading ? (
-                  <span className="inline-flex items-center gap-1.5">
-                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                    Loading…
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1.5">
-                    <RefreshCw className="h-3.5 w-3.5" />
-                    Apply
-                  </span>
-                )}
-              </Button>
-            </div>
-          </div>
-
-          <div className="grid gap-2 rounded-md border border-slate-700/50 bg-muted/10 p-2 sm:grid-cols-2">
-            <div className="space-y-1">
-              <p className="text-[11px] font-medium text-muted-foreground">From</p>
-              <div className="grid grid-cols-2 gap-1.5">
-                <Input
-                  id="rec-from-date"
-                  type="date"
-                  aria-label="From date"
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
-                  className="h-8 min-h-8 cursor-pointer bg-background/80 text-xs border-slate-600 px-2"
-                />
-                <Input
-                  id="rec-from-time"
-                  type="time"
-                  aria-label="From time (optional)"
-                  value={startTime}
-                  onChange={(e) => setStartTime(e.target.value)}
-                  className="h-8 min-h-8 cursor-pointer bg-background/80 text-xs border-slate-600 px-2"
-                />
-              </div>
-            </div>
-
-            <div className="space-y-1">
-              <p className="text-[11px] font-medium text-muted-foreground">To</p>
-              <div className="grid grid-cols-2 gap-1.5">
-                <Input
-                  id="rec-to-date"
-                  type="date"
-                  aria-label="To date"
-                  value={endDate}
-                  onChange={(e) => setEndDate(e.target.value)}
-                  className="h-8 min-h-8 cursor-pointer bg-background/80 text-xs border-slate-600 px-2"
-                />
-                <Input
-                  id="rec-to-time"
-                  type="time"
-                  aria-label="To time (optional)"
-                  value={endTime}
-                  onChange={(e) => setEndTime(e.target.value)}
-                  className="h-8 min-h-8 cursor-pointer bg-background/80 text-xs border-slate-600 px-2"
-                />
-              </div>
-            </div>
-          </div>
-
-          {error && (
-            <p className="text-xs text-red-400" role="alert">
-              {error}
-            </p>
-          )}
-
-          <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>
-              Showing {rows.length} of {total} segments
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <HardDrive className="h-3.5 w-3.5" />
-              MinIO-backed
-            </span>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card className="bg-card/50 backdrop-blur-sm border-slate-700/50 overflow-hidden">
+      <Card className="surface-panel overflow-hidden">
         <CardContent className="p-0">
-          <div className="recordings-table-scroll max-h-[15rem] overflow-auto">
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 z-10 bg-muted/30 text-left text-muted-foreground">
+          <div ref={recordingsTableScrollRef} className="recordings-table-scroll max-h-[15rem] overflow-auto">
+            <table className="enterprise-table w-full text-sm">
+              <thead className="sticky top-0 z-10">
                 <tr>
-                  <th className="p-2 font-medium">Camera</th>
-                  <th className="p-2 font-medium">Start</th>
-                  <th className="p-2 font-medium">End</th>
-                  <th className="p-2 font-medium">Duration</th>
-                  <th className="p-2 font-medium">Type</th>
-                  <th className="p-2 font-medium">Size</th>
-                  <th className="p-2 font-medium">Source</th>
-                  <th className="p-2 font-medium whitespace-nowrap">Actions</th>
+                  <th>Camera</th>
+                  <th>Start</th>
+                  <th>End</th>
+                  <th>Duration</th>
+                  <th>Type</th>
+                  <th>Size</th>
+                  {!hideRecordingsSource && <th>Source</th>}
+                  <th className="whitespace-nowrap">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.length === 0 && !loading ? (
                   <tr>
-                    <td colSpan={8} className="p-6 text-center text-muted-foreground">
+                    <td colSpan={hideRecordingsSource ? 7 : 8} className="p-6 text-center text-muted-foreground">
                       No recordings in this range. Live webcam segments appear here after upload completes.
                     </td>
                   </tr>
                 ) : (
                   rows.map((r) => (
-                    <tr key={r.id} className="border-t border-slate-800/80 hover:bg-muted/10">
+                    <tr key={r.id}>
                       <td className="p-2 align-top">
                         <div className="font-medium text-foreground">
                           {displayRecordingCameraName(r, cameraNameById)}
@@ -901,14 +953,18 @@ export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: Recordi
                         </Badge>
                       </td>
                       <td className="p-2 align-top">{formatBytes(r.size_bytes)}</td>
-                      <td className="p-2 align-top text-muted-foreground text-xs">{displayIngestSource(r.ingest_source)}</td>
+                      {!hideRecordingsSource && (
+                        <td className="p-2 align-top text-xs text-muted-foreground">
+                          {displayIngestSource(r.ingest_source)}
+                        </td>
+                      )}
                       <td className="p-2 align-top">
                         <div className="flex flex-wrap items-center gap-1.5">
                           <Button
                             type="button"
                             size="sm"
                             variant="outline"
-                            className="border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/10"
+                            className="border-primary/30 text-primary hover:bg-primary/5"
                             onClick={() => void play(r.id)}
                           >
                             <Play className="h-3.5 w-3.5 mr-1" />
@@ -918,7 +974,7 @@ export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: Recordi
                             type="button"
                             size="sm"
                             variant="outline"
-                            className="border-red-500/40 text-red-300 hover:bg-red-500/10"
+                            className="border-destructive/35 text-destructive hover:bg-destructive/5"
                             disabled={deletingId === r.id}
                             onClick={() => void remove(r.id)}
                           >
@@ -936,7 +992,7 @@ export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: Recordi
         </CardContent>
       </Card>
 
-      <Card className="bg-card/50 backdrop-blur-sm border-slate-700/50 overflow-hidden">
+      <Card className="surface-panel overflow-hidden">
         <CardHeader className="pb-2">
           <CardTitle className="text-base">Object detections (AI processing)</CardTitle>
           <CardDescription className="text-xs">
@@ -946,15 +1002,15 @@ export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: Recordi
         </CardHeader>
         <CardContent className="p-0">
           <div className="recordings-table-scroll max-h-[15rem] overflow-auto">
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 z-10 bg-muted/30 text-left text-muted-foreground">
+            <table className="enterprise-table w-full text-sm">
+              <thead className="sticky top-0 z-10">
                 <tr>
-                  <th className="p-3 font-medium">Camera</th>
-                  <th className="p-3 font-medium">Type</th>
-                  <th className="p-3 font-medium">Confidence</th>
-                  <th className="p-3 font-medium">Event time</th>
-                  <th className="p-3 font-medium">Offset</th>
-                  <th className="p-3 font-medium whitespace-nowrap">Playback</th>
+                  <th>Camera</th>
+                  <th>Type</th>
+                  <th>Confidence</th>
+                  <th>Event time</th>
+                  <th>Offset</th>
+                  <th className="whitespace-nowrap">Playback</th>
                 </tr>
               </thead>
               <tbody>
@@ -967,7 +1023,7 @@ export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: Recordi
                   </tr>
                 ) : (
                   detRows.map((d) => (
-                    <tr key={d.id} className="border-t border-slate-800/80 hover:bg-muted/10">
+                    <tr key={d.id}>
                       <td className="p-3 align-top">
                         {cameraNameById.get(d.camera_id) ?? d.camera_id.slice(0, 8)}
                       </td>
@@ -984,7 +1040,7 @@ export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: Recordi
                           type="button"
                           size="sm"
                           variant="outline"
-                          className="border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/10"
+                          className="border-primary/30 text-primary hover:bg-primary/5"
                           onClick={() => void playFromDetection(d.id)}
                         >
                           <Play className="h-3.5 w-3.5 mr-1" />

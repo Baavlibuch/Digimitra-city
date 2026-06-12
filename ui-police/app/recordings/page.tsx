@@ -47,7 +47,7 @@ export default function RecordingsPage() {
   }
 
   return (
-    <ThemeProvider defaultTheme="dark" defaultLanguage="en">
+    <ThemeProvider defaultTheme="light" defaultLanguage="en">
       {isCheckingAuth ? (
         <div className="min-h-screen bg-background" aria-busy="true" />
       ) : isAuthenticated ? (
@@ -61,7 +61,7 @@ export default function RecordingsPage() {
 
           {signOutError && (
             <div className="container mx-auto px-6 pt-4">
-              <p className="text-sm text-red-400" role="alert">
+              <p className="text-sm text-destructive" role="alert">
                 {signOutError}
               </p>
             </div>

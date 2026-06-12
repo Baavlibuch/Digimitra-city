@@ -161,7 +161,7 @@ export function VideoFileUpload({ onUploaded, variant = "card" }: VideoFileUploa
           type="button"
           size="sm"
           variant="secondary"
-          className="border-slate-600"
+          className="border-border"
           disabled={uploading}
           onClick={() => fileInputRef.current?.click()}
         >
@@ -184,7 +184,7 @@ export function VideoFileUpload({ onUploaded, variant = "card" }: VideoFileUploa
   }
 
   return (
-    <Card className="bg-slate-900/40 border-violet-500/25 mb-8">
+    <Card className="surface-panel border-violet-200 bg-violet-50/40 mb-8">
       <CardHeader className="pb-3">
         <CardTitle className="text-lg flex items-center gap-2">
           <FileVideo className="h-5 w-5 text-violet-400" />
@@ -203,7 +203,7 @@ export function VideoFileUpload({ onUploaded, variant = "card" }: VideoFileUploa
               value={cameraMode}
               onValueChange={(v) => setCameraMode(v as "virtual" | "existing")}
             >
-              <SelectTrigger className="bg-background/80 border-slate-600">
+              <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -216,7 +216,7 @@ export function VideoFileUpload({ onUploaded, variant = "card" }: VideoFileUploa
             <div className="space-y-2">
               <Label className="text-xs text-muted-foreground">Camera</Label>
               <Select value={selectedCameraId} onValueChange={setSelectedCameraId}>
-                <SelectTrigger className="bg-background/80 border-slate-600">
+                <SelectTrigger>
                   <SelectValue placeholder="Select camera" />
                 </SelectTrigger>
                 <SelectContent>
@@ -242,7 +242,7 @@ export function VideoFileUpload({ onUploaded, variant = "card" }: VideoFileUploa
             accept={ALLOWED_VIDEO_FILE_ACCEPT}
             onChange={onFileChange}
             disabled={uploading}
-            className="bg-background/80 border-slate-600 cursor-pointer file:cursor-pointer"
+            className="cursor-pointer file:cursor-pointer"
           />
           {selectedFile && (
             <p className="text-xs text-muted-foreground">

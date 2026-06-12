@@ -18,12 +18,23 @@ export type LiveWsAlert = {
 
 export type LiveWsConnectionStatus = "disabled" | "connecting" | "connected" | "error"
 
+export type LiveWsSceneStatus = {
+  type: "live_scene_status"
+  camera_id: string
+  scene_status: string
+  message: string
+  timestamp: string
+  source_alert_type?: string
+  severity?: string
+}
+
 type Result = {
   enabled: boolean
   status: LiveWsConnectionStatus
   alerts: LiveWsAlert[]
   alertByCameraId: Map<string, LiveWsAlert>
   latestBboxesByCameraId: Map<string, number[][]>
+  sceneStatusByCameraId: Map<string, LiveWsSceneStatus>
   error: string | null
 }
 
@@ -31,6 +42,9 @@ export function useLiveAlertWebSocket(operatorUsername: string, authReady: boole
   const enabled = isLiveWebSocketEnabled()
   const [status, setStatus] = useState<LiveWsConnectionStatus>(enabled ? "connecting" : "disabled")
   const [alerts, setAlerts] = useState<LiveWsAlert[]>([])
+  const [sceneStatusByCameraId, setSceneStatusByCameraId] = useState<Map<string, LiveWsSceneStatus>>(
+    () => new Map(),
+  )
   const [error, setError] = useState<string | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
   const tokenRef = useRef<string | null>(null)
@@ -77,6 +91,15 @@ export function useLiveAlertWebSocket(operatorUsername: string, authReady: boole
             }
             if (data.type === "live_alert") {
               pushAlert(data as LiveWsAlert)
+              return
+            }
+            if (data.type === "live_scene_status") {
+              const scene = data as LiveWsSceneStatus
+              setSceneStatusByCameraId((prev) => {
+                const next = new Map(prev)
+                next.set(scene.camera_id, scene)
+                return next
+              })
             }
           } catch {
             /* ignore malformed */
@@ -136,6 +159,7 @@ export function useLiveAlertWebSocket(operatorUsername: string, authReady: boole
     alerts,
     alertByCameraId,
     latestBboxesByCameraId,
+    sceneStatusByCameraId,
     error,
   }
 }
