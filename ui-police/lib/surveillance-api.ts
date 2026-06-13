@@ -93,6 +93,7 @@ export type RecordingSegmentDto = {
   ingest_source: string
   created_at: string
   extra: Record<string, unknown> | null
+  preview_url?: string | null
 }
 
 export type RecordingListDto = {
@@ -260,6 +261,11 @@ export type SemanticSearchHitDto = {
   timestamp_offset_ms: number
   similarity: number
   model_version?: string | null
+  thumbnail_url?: string | null
+  match_detections?: DetectionDto[] | null
+  event_label?: string | null
+  event_labels?: string[] | null
+  event_severity?: string | null
 }
 
 export type SemanticSearchResponseDto = {

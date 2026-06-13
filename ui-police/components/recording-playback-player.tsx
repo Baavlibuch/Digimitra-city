@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { AlertTriangle, Maximize2, Minimize2, Search } from "lucide-react"
+import { Maximize2, Minimize2, Search } from "lucide-react"
 import type { DetectionDto } from "@/lib/surveillance-api"
 import {
   bboxToPercentRect,
@@ -16,6 +16,7 @@ import {
   type SearchEvidenceContext,
 } from "@/lib/detection-overlay-utils"
 import { cn } from "@/lib/utils"
+import { EventInferenceBanner } from "@/components/event-inference-banner"
 
 /** When false, video plays without on-screen bounding boxes or object/confidence labels. */
 const SHOW_DETECTION_OVERLAYS = false
@@ -394,18 +395,11 @@ export function RecordingPlaybackPlayer({
 
         {/* Event banner */}
         {eventBanner && (
-          <div
-            key={eventBanner.key}
-            className="pointer-events-none absolute bottom-14 left-1/2 z-20 w-[min(100%,22rem)] -translate-x-1/2 animate-in fade-in slide-in-from-bottom-2 duration-300"
-          >
-            <div className="rounded-lg border border-orange-500/35 bg-slate-950/92 px-4 py-2.5 text-center shadow-lg backdrop-blur-sm">
-              <div className="flex items-center justify-center gap-2 text-orange-200">
-                <AlertTriangle className="h-4 w-4 shrink-0" />
-                <span className="text-sm font-semibold">{eventBanner.label}</span>
-              </div>
-              <p className="mt-1 font-mono text-xs text-slate-400">{eventBanner.clock}</p>
-            </div>
-          </div>
+          <EventInferenceBanner
+            label={eventBanner.label}
+            clock={eventBanner.clock}
+            bannerKey={eventBanner.key}
+          />
         )}
 
         {/* Native-style controls strip */}

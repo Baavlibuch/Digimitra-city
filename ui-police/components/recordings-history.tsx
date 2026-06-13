@@ -12,13 +12,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useAuth } from "@/components/auth-provider"
@@ -29,17 +22,21 @@ import {
   fetchSurveillanceAccessToken,
   deleteRecording,
   fetchDetections,
-  fetchDetectionPlaybackUrl,
   fetchSemanticSearch,
   fetchSemanticSearchStatus,
   isSemanticSearchOperational,
   shouldRetrySemanticStatusPoll,
   type CameraDto,
-  type RecordingSegmentDto,
   type DetectionDto,
+  type RecordingSegmentDto,
   type SemanticSearchHitDto,
   type SemanticSearchStatusDto,
 } from "@/lib/surveillance-api"
+import {
+  eventBannerLabel,
+  isIdleSceneMessage,
+} from "@/lib/detection-overlay-utils"
+import { EventInferenceBanner } from "@/components/event-inference-banner"
 import {
   RecordingPlaybackPlayer,
   type PlaybackEntryContext,
@@ -94,7 +91,6 @@ function isUploadedDetection(cameraId: string, cameraNameById: Map<string, strin
 }
 
 function buildUploadedCctvLabels(
-  detections: DetectionDto[],
   cameraNameById: Map<string, string>,
   recordings: RecordingSegmentDto[] = [],
   semanticHits: SemanticSearchHitDto[] = [],
@@ -105,10 +101,6 @@ function buildUploadedCctvLabels(
     if (!existing || time < existing) {
       segmentFirstTime.set(segmentId, time)
     }
-  }
-  for (const d of detections) {
-    if (!isUploadedDetection(d.camera_id, cameraNameById)) continue
-    consider(d.recording_segment_id, d.absolute_event_time)
   }
   for (const r of recordings) {
     if (!isUploadedSource(r.camera_id, cameraNameById, r.ingest_source)) continue
@@ -135,15 +127,75 @@ function buildUploadedCctvLabels(
   return labels
 }
 
-function displayDetectionCameraName(
-  detection: DetectionDto,
-  cameraNameById: Map<string, string>,
-  uploadedCctvBySegmentId: Map<string, string>,
-): string {
-  if (isUploadedDetection(detection.camera_id, cameraNameById)) {
-    return uploadedCctvBySegmentId.get(detection.recording_segment_id) ?? "CCTV 1"
-  }
-  return cameraNameById.get(detection.camera_id) ?? detection.camera_id.slice(0, 8)
+function semanticHitEventLabels(hit: SemanticSearchHitDto): string[] {
+  const fromApi = (hit.event_labels ?? []).filter((l): l is string => Boolean(l?.trim()))
+  if (fromApi.length > 0) return [...new Set(fromApi)]
+  if (hit.event_label?.trim()) return [hit.event_label.trim()]
+  const dets = hit.match_detections ?? []
+  if (dets.length === 0) return []
+  const label = eventBannerLabel(dets)
+  if (!label || isIdleSceneMessage(label)) return []
+  return [label]
+}
+
+function SemanticSearchThumbnail({
+  url,
+  eventLabels = [],
+}: {
+  url?: string | null
+  eventLabels?: string[]
+}) {
+  const [failed, setFailed] = useState(false)
+  const showImage = Boolean(url) && !failed
+  const primaryLabel = eventLabels[0] ?? null
+
+  return (
+    <div className="relative w-40 shrink-0 aspect-video overflow-hidden rounded-md border border-border/70 bg-muted/30">
+      {showImage ? (
+        <img
+          src={url!}
+          alt=""
+          className="absolute inset-0 h-full w-full object-cover"
+          loading="lazy"
+          onError={() => setFailed(true)}
+        />
+      ) : (
+        <div className="absolute inset-0 flex items-center justify-center px-2 text-center">
+          <span className="text-[10px] leading-tight text-muted-foreground">Preview unavailable</span>
+        </div>
+      )}
+      {primaryLabel ? (
+        <EventInferenceBanner
+          label={primaryLabel}
+          compact
+          bannerKey={`${primaryLabel}-${url ?? "no-thumb"}`}
+        />
+      ) : null}
+    </div>
+  )
+}
+
+function RecordingPreviewThumbnail({ url }: { url?: string | null }) {
+  const [failed, setFailed] = useState(false)
+  const showImage = Boolean(url) && !failed
+
+  return (
+    <div className="relative w-36 h-[81px] shrink-0 overflow-hidden rounded-md border border-border/70 bg-muted/30">
+      {showImage ? (
+        <img
+          src={url!}
+          alt=""
+          className="absolute inset-0 h-full w-full object-cover"
+          loading="lazy"
+          onError={() => setFailed(true)}
+        />
+      ) : (
+        <div className="absolute inset-0 flex items-center justify-center px-2 text-center">
+          <span className="text-[10px] leading-tight text-muted-foreground">Preview unavailable</span>
+        </div>
+      )}
+    </div>
+  )
 }
 
 function displaySemanticSearchCameraName(
@@ -202,16 +254,12 @@ export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: Recordi
   /** Same JWT as `token`, set synchronously when /api/v1/token returns so handlers work before React commits state. */
   const surveillanceTokenRef = useRef<string | null>(null)
   const [cameras, setCameras] = useState<CameraDto[]>([])
-  const [cameraFilter, setCameraFilter] = useState<string>("all")
   const [startDate, setStartDate] = useState("")
   const [startTime, setStartTime] = useState("")
   const [endDate, setEndDate] = useState("")
   const [endTime, setEndTime] = useState("")
   const [rows, setRows] = useState<RecordingSegmentDto[]>([])
   const [total, setTotal] = useState(0)
-  const [detRows, setDetRows] = useState<DetectionDto[]>([])
-  const [detTotal, setDetTotal] = useState(0)
-  const [objectTypeFilter, setObjectTypeFilter] = useState<string>("all")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [playbackUrl, setPlaybackUrl] = useState<string | null>(null)
@@ -229,7 +277,6 @@ export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: Recordi
   const semanticPollGenRef = useRef(0)
   const pendingSeekSecRef = useRef<number | null>(null)
   const [playbackDetections, setPlaybackDetections] = useState<DetectionDto[]>([])
-  const [playbackDetectionsLoading, setPlaybackDetectionsLoading] = useState(false)
   const [playbackEntryContext, setPlaybackEntryContext] = useState<PlaybackEntryContext>({ mode: "normal" })
   const [activeSegmentStart, setActiveSegmentStart] = useState<string | null>(null)
   const recordingFiltersCardRef = useRef<HTMLDivElement>(null)
@@ -259,14 +306,12 @@ export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: Recordi
   }, [error, loading, syncPairedPanelHeight])
 
   const filtersRef = useRef({
-    cameraFilter,
     startDate,
     startTime,
     endDate,
     endTime,
-    objectTypeFilter,
   })
-  filtersRef.current = { cameraFilter, startDate, startTime, endDate, endTime, objectTypeFilter }
+  filtersRef.current = { startDate, startTime, endDate, endTime }
 
   const refreshSemanticStatus = useCallback(async (surveillanceAccessToken?: string | null) => {
     setSemanticStatusLoading(true)
@@ -367,8 +412,8 @@ export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: Recordi
   }, [cameras])
 
   const uploadedDetectionCctvBySegmentId = useMemo(
-    () => buildUploadedCctvLabels(detRows, cameraNameById, rows, semanticHits),
-    [detRows, cameraNameById, rows, semanticHits],
+    () => buildUploadedCctvLabels(cameraNameById, rows, semanticHits),
+    [cameraNameById, rows, semanticHits],
   )
 
   const applyPreset = useCallback((preset: "24h" | "7d" | "today" | "clear") => {
@@ -416,7 +461,6 @@ export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: Recordi
 
       const list = await fetchRecordings({
         token: tok,
-        cameraId: f.cameraFilter === "all" ? undefined : f.cameraFilter,
         start: startIso,
         end: endIso,
         limit: 100,
@@ -424,18 +468,6 @@ export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: Recordi
       })
       setRows(list.items)
       setTotal(list.total)
-
-      const dlist = await fetchDetections({
-        token: tok,
-        cameraId: f.cameraFilter === "all" ? undefined : f.cameraFilter,
-        objectType: f.objectTypeFilter === "all" ? undefined : f.objectTypeFilter,
-        eventAfter: startIso,
-        eventBefore: endIso,
-        limit: 100,
-        offset: 0,
-      })
-      setDetRows(dlist.items)
-      setDetTotal(dlist.total)
     } catch (e) {
       if (!acquiredTok) {
         surveillanceTokenRef.current = null
@@ -444,8 +476,6 @@ export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: Recordi
       setError(e instanceof Error ? e.message : "Failed to load recordings.")
       setRows([])
       setTotal(0)
-      setDetRows([])
-      setDetTotal(0)
     } finally {
       setLoading(false)
       const t = surveillanceTokenRef.current
@@ -469,7 +499,6 @@ export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: Recordi
   }, [catalogRefreshTrigger, load])
 
   const loadPlaybackDetections = useCallback(async (recordingId: string, token: string) => {
-    setPlaybackDetectionsLoading(true)
     try {
       const all: DetectionDto[] = []
       let offset = 0
@@ -490,8 +519,6 @@ export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: Recordi
       setPlaybackDetections(all)
     } catch {
       setPlaybackDetections([])
-    } finally {
-      setPlaybackDetectionsLoading(false)
     }
   }, [])
 
@@ -553,7 +580,6 @@ export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: Recordi
         token: t,
         query: q,
         top_k: 20,
-        cameraId: cameraFilter === "all" ? undefined : cameraFilter,
       })
       if (!res.enabled) {
         setSemanticHits([])
@@ -588,33 +614,6 @@ export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: Recordi
         },
       },
     })
-  }
-
-  const playFromDetection = async (detectionId: string) => {
-    const t = getSurveillanceAccessTokenOrNull()
-    if (!t) {
-      setError(loading ? "Connecting to surveillance API…" : "Not authenticated with surveillance API yet.")
-      return
-    }
-    setError(null)
-    try {
-      const pb = await fetchDetectionPlaybackUrl(t, detectionId, 2)
-      await openPlayback(pb.recording_id, {
-        seekSec: pb.timestamp_offset_ms / 1000.0,
-        entryContext: {
-          mode: "detection",
-          detectionId: pb.detection_id,
-          offsetMs: pb.timestamp_offset_ms,
-        },
-      })
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Playback failed.")
-      setPlaybackUrl(null)
-      setActiveRecordingId(null)
-      pendingSeekSecRef.current = null
-      setPlaybackDetections([])
-      setPlaybackEntryContext({ mode: "normal" })
-    }
   }
 
   const remove = async (id: string) => {
@@ -665,72 +664,72 @@ export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: Recordi
 
   return (
     <div className="space-y-4">
-      <div className="grid items-start gap-4 lg:grid-cols-12 lg:gap-5">
-      <Card
-        className="surface-panel flex flex-col gap-0 overflow-hidden py-0 lg:col-span-4"
-        style={
-          pairedPanelHeight != null
-            ? { height: pairedPanelHeight, maxHeight: pairedPanelHeight }
-            : undefined
-        }
-      >
-        <CardHeader className="shrink-0 space-y-1 px-4 pb-1 pt-4">
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Search className="h-4 w-4 text-amber-400" />
-            Semantic visual search
-          </CardTitle>
-          <CardDescription className="text-xs leading-snug">
-            CLIP scene search — opens playback and seeks to the match.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex min-h-0 flex-1 flex-col gap-2 px-4 pb-3 pt-0">
-          <div className="flex shrink-0 flex-col gap-2">
-            <Input
-              type="search"
-              placeholder="hand, crowd, bicycle…"
-              value={semanticQuery}
-              onChange={(e) => setSemanticQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void runSemanticSearch()
-              }}
-              className="h-9 w-full text-sm"
-              aria-label="Semantic search query"
-              disabled={
-                semanticLoading ||
-                semanticStatusLoading ||
-                !getSurveillanceAccessTokenOrNull() ||
-                (semanticStatus !== null && semanticStatus.configured === false)
-              }
-            />
-            <Button
-              type="button"
-              size="sm"
-              className="h-9 w-full shrink-0"
-              disabled={
-                semanticLoading ||
-                semanticStatusLoading ||
-                !getSurveillanceAccessTokenOrNull() ||
-                (semanticStatus !== null && semanticStatus.configured === false)
-              }
-              onClick={() => void runSemanticSearch()}
-            >
-              {semanticLoading ? "Searching…" : "Search"}
-            </Button>
-          </div>
-          <div className="recordings-table-scroll surface-inset min-h-0 flex-1 overflow-y-auto text-sm">
+      <div className="grid items-start gap-3 lg:grid-cols-12 lg:gap-4">
+        <Card
+          className="surface-panel flex min-w-0 flex-col gap-0 overflow-hidden py-0 lg:col-span-9"
+          style={
+            pairedPanelHeight != null
+              ? { height: pairedPanelHeight, maxHeight: pairedPanelHeight }
+              : undefined
+          }
+        >
+          <CardHeader className="shrink-0 space-y-0.5 px-3 pb-0 pt-3">
+            <CardTitle className="flex items-center gap-1.5 text-sm">
+              <Search className="h-3.5 w-3.5 text-amber-400" />
+              Search in Recordings
+            </CardTitle>
+            <CardDescription className="text-[11px] leading-snug">
+              Describe a person, object, or activity to find it in recordings.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex min-h-0 flex-1 flex-col gap-1.5 px-3 pb-2 pt-0">
+            <div className="flex shrink-0 flex-col gap-1.5 lg:flex-row lg:items-stretch">
+              <Input
+                type="search"
+                placeholder="Try Searching Crowd, Person, Car..."
+                value={semanticQuery}
+                onChange={(e) => setSemanticQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void runSemanticSearch()
+                }}
+                className="h-8 w-full flex-1 text-xs"
+                aria-label="Semantic search query"
+                disabled={
+                  semanticLoading ||
+                  semanticStatusLoading ||
+                  !getSurveillanceAccessTokenOrNull() ||
+                  (semanticStatus !== null && semanticStatus.configured === false)
+                }
+              />
+              <Button
+                type="button"
+                size="sm"
+                className="h-8 w-full shrink-0 text-xs lg:w-auto"
+                disabled={
+                  semanticLoading ||
+                  semanticStatusLoading ||
+                  !getSurveillanceAccessTokenOrNull() ||
+                  (semanticStatus !== null && semanticStatus.configured === false)
+                }
+                onClick={() => void runSemanticSearch()}
+              >
+                {semanticLoading ? "Searching…" : "Search"}
+              </Button>
+            </div>
+            <div className="recordings-table-scroll surface-inset min-h-[12rem] overflow-y-auto text-xs lg:min-h-0 lg:flex-1">
             {semanticStatusLoading && (
-              <p className="px-3 py-2 text-xs text-muted-foreground" role="status">
+              <p className="px-2 py-1.5 text-[11px] text-muted-foreground" role="status">
                 Checking semantic search capability on the server…
               </p>
             )}
             {semanticStatusFetchError && (
-              <p className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2 text-xs text-amber-800" role="alert">
+              <p className="flex flex-wrap items-center gap-x-2 gap-y-1 px-2 py-1.5 text-[11px] text-amber-800" role="alert">
                 <span>{semanticStatusFetchError}</span>
                 <Button
                   type="button"
                   variant="ghost"
                   size="sm"
-                  className="h-7 px-2 text-xs text-amber-100 hover:bg-amber-500/10"
+                  className="h-6 px-2 text-[11px] text-amber-100 hover:bg-amber-500/10"
                   disabled={semanticStatusLoading}
                   onClick={() => {
                     void refreshSemanticStatus(getSurveillanceAccessTokenOrNull())
@@ -741,38 +740,45 @@ export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: Recordi
               </p>
             )}
             {showSemanticNotConfigured && (
-              <p className="px-3 py-2 text-xs text-muted-foreground" role="status">
+              <p className="px-2 py-1.5 text-[11px] text-muted-foreground" role="status">
                 {semanticStatus!.detail?.trim() || "Semantic search is not configured for this server."}
               </p>
             )}
             {showSemanticIndexWarning && (
-              <p className="px-3 py-2 text-xs text-amber-800" role="status">
+              <p className="px-2 py-1.5 text-[11px] text-amber-800" role="status">
                 {semanticStatus!.detail}
               </p>
             )}
             {showSemanticWarming && (
-              <p className="px-3 py-2 text-xs text-muted-foreground" role="status">
+              <p className="px-2 py-1.5 text-[11px] text-muted-foreground" role="status">
                 Semantic search index is still starting on the server…
               </p>
             )}
             {semanticError && (
-              <p className="px-3 py-2 text-xs text-amber-800" role="status">
+              <p className="px-2 py-1.5 text-[11px] text-amber-800" role="status">
                 {semanticError}
               </p>
             )}
             {semanticHits.length > 0 ? (
               <ul className="divide-y divide-border/70">
                 {semanticHits.map((h) => (
-                  <li key={`${h.recording_segment_id}-${h.timestamp_offset_ms}-${h.vector_id ?? ""}`} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
-                    <div className="min-w-0">
-                      <div className="font-medium text-foreground truncate">
+                  <li
+                    key={`${h.recording_segment_id}-${h.timestamp_offset_ms}-${h.vector_id ?? ""}`}
+                    className="flex items-center gap-3 px-3 py-2.5"
+                  >
+                    <SemanticSearchThumbnail
+                      url={h.thumbnail_url}
+                      eventLabels={semanticHitEventLabels(h)}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-xs font-medium text-foreground truncate">
                         {displaySemanticSearchCameraName(
                           h,
                           cameraNameById,
                           uploadedDetectionCctvBySegmentId,
                         )}
                       </div>
-                      <div className="text-xs text-muted-foreground truncate" title={h.recording_segment_id}>
+                      <div className="mt-0.5 text-[11px] text-muted-foreground truncate" title={h.recording_segment_id}>
                         {(h.timestamp_offset_ms / 1000).toFixed(1)}s · score {(h.similarity * 100).toFixed(0)}%
                       </div>
                     </div>
@@ -780,7 +786,7 @@ export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: Recordi
                       type="button"
                       size="sm"
                       variant="outline"
-                      className="shrink-0"
+                      className="h-7 shrink-0 px-2 text-[11px]"
                       onClick={() => void playFromSemantic(h)}
                     >
                       <Play className="h-3 w-3 mr-1" />
@@ -796,139 +802,99 @@ export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: Recordi
               !showSemanticNotConfigured &&
               !showSemanticIndexWarning &&
               !showSemanticWarming && (
-                <p className="px-3 py-2 text-xs text-muted-foreground">Results appear here after you search.</p>
+                <p className="px-2 py-1.5 text-[11px] text-muted-foreground">Results appear here after you search.</p>
               )
             )}
           </div>
         </CardContent>
-      </Card>
+        </Card>
 
-      <div ref={recordingFiltersCardRef} className="lg:col-span-8">
-      <Card className="surface-panel h-full gap-0 py-0">
-        <CardHeader className="space-y-1 px-4 pb-1 pt-4">
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Video className="h-4 w-4 text-primary" />
-            Recording history
-          </CardTitle>
-          <CardDescription className="text-xs leading-snug">
-            Quick range or date filter · signed playback URLs.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-2 px-4 pb-3 pt-0">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex flex-wrap gap-1.5">
-              <Button type="button" variant="secondary" size="sm" className="filter-pill h-7 px-3 text-xs" onClick={() => applyPreset("24h")}>
-                Last 24h
+        <div ref={recordingFiltersCardRef} className="min-w-0 lg:col-span-3">
+          <Card className="surface-panel h-full gap-0 py-0">
+            <CardHeader className="space-y-0.5 px-3 pb-0 pt-3">
+              <CardTitle className="flex items-center gap-1.5 text-sm">
+                <Video className="h-3.5 w-3.5 text-primary" />
+                Recording history
+              </CardTitle>
+              <CardDescription className="text-[11px] leading-snug">
+                Filter the recording to desired timeframe.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-1.5 px-3 pb-2 pt-0">
+              <div className="flex flex-wrap items-center gap-1">
+                  <Button type="button" variant="secondary" size="sm" className="filter-pill h-6 px-2 text-[11px]" onClick={() => applyPreset("24h")}>
+                    Last 24h
+                  </Button>
+                  <Button type="button" variant="secondary" size="sm" className="filter-pill h-6 px-2 text-[11px]" onClick={() => applyPreset("today")}>
+                    Today
+                  </Button>
+                  <Button type="button" variant="ghost" size="sm" className="filter-pill h-6 px-2 text-[11px]" onClick={() => applyPreset("clear")}>
+                    Clear
+                  </Button>
+                  <VideoFileUpload variant="compact" onUploaded={onUploaded} />
+              </div>
+
+              <div className="grid gap-1.5">
+                <div className="space-y-0.5">
+                  <Label htmlFor="rec-from-date" className="text-[10px] text-muted-foreground">
+                    From date
+                  </Label>
+                  <Input
+                    id="rec-from-date"
+                    type="date"
+                    aria-label="From date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className="h-7 min-h-7 cursor-pointer px-2 text-[11px]"
+                  />
+                </div>
+                <div className="space-y-0.5">
+                  <Label htmlFor="rec-to-date" className="text-[10px] text-muted-foreground">
+                    To date
+                  </Label>
+                  <Input
+                    id="rec-to-date"
+                    type="date"
+                    aria-label="To date"
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    className="h-7 min-h-7 cursor-pointer px-2 text-[11px]"
+                  />
+                </div>
+              </div>
+
+              <Button
+                type="button"
+                size="sm"
+                className="h-7 w-full text-[11px]"
+                onClick={() => void load()}
+                disabled={loading}
+              >
+                {loading ? (
+                  <span className="inline-flex items-center gap-1">
+                    <RefreshCw className="h-3 w-3 animate-spin" />
+                    Loading…
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1">
+                    <RefreshCw className="h-3 w-3" />
+                    Apply
+                  </span>
+                )}
               </Button>
-              <Button type="button" variant="secondary" size="sm" className="filter-pill h-7 px-3 text-xs" onClick={() => applyPreset("today")}>
-                Today
-              </Button>
-              <Button type="button" variant="ghost" size="sm" className="filter-pill h-7 px-3 text-xs" onClick={() => applyPreset("clear")}>
-                Clear
-              </Button>
-            </div>
-            <VideoFileUpload variant="compact" onUploaded={onUploaded} />
-          </div>
 
-          <div className="grid gap-2 sm:grid-cols-2">
-            <div className="space-y-1">
-              <Label className="text-[11px] text-muted-foreground">Camera</Label>
-              <Select value={cameraFilter} onValueChange={setCameraFilter}>
-                <SelectTrigger className="h-8 text-xs">
-                  <SelectValue placeholder="All cameras" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All cameras</SelectItem>
-                  {cameras.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>
-                      {c.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+              {error && (
+                <p className="text-[11px] text-destructive" role="alert">
+                  {error}
+                </p>
+              )}
 
-            <div className="space-y-1">
-              <Label className="text-[11px] text-muted-foreground">Object (AI)</Label>
-              <Select value={objectTypeFilter} onValueChange={setObjectTypeFilter}>
-                <SelectTrigger className="h-8 text-xs">
-                  <SelectValue placeholder="All types" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All types</SelectItem>
-                  <SelectItem value="person">person</SelectItem>
-                  <SelectItem value="bicycle">bicycle</SelectItem>
-                  <SelectItem value="car">car</SelectItem>
-                  <SelectItem value="motorcycle">motorcycle</SelectItem>
-                  <SelectItem value="bus">bus</SelectItem>
-                  <SelectItem value="truck">truck</SelectItem>
-                  <SelectItem value="backpack">backpack</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          <div className="grid gap-2 sm:grid-cols-2">
-            <div className="space-y-1">
-              <Label htmlFor="rec-from-date" className="text-[11px] text-muted-foreground">
-                From date
-              </Label>
-              <Input
-                id="rec-from-date"
-                type="date"
-                aria-label="From date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                className="h-8 min-h-8 cursor-pointer text-xs px-2"
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="rec-to-date" className="text-[11px] text-muted-foreground">
-                To date
-              </Label>
-              <Input
-                id="rec-to-date"
-                type="date"
-                aria-label="To date"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-                className="h-8 min-h-8 cursor-pointer text-xs px-2"
-              />
-            </div>
-          </div>
-
-          <Button
-            type="button"
-            size="sm"
-            className="h-8 w-full text-xs"
-            onClick={() => void load()}
-            disabled={loading}
-          >
-            {loading ? (
-              <span className="inline-flex items-center gap-1.5">
-                <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                Loading…
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-1.5">
-                <RefreshCw className="h-3.5 w-3.5" />
-                Apply
-              </span>
-            )}
-          </Button>
-
-          {error && (
-            <p className="text-xs text-destructive" role="alert">
-              {error}
-            </p>
-          )}
-
-          <p className="text-xs text-muted-foreground">
-            Showing {rows.length} of {total} segments
-          </p>
-        </CardContent>
-      </Card>
-      </div>
+              <p className="text-[11px] text-muted-foreground">
+                Showing {rows.length} of {total} segments
+              </p>
+            </CardContent>
+          </Card>
+        </div>
       </div>
 
       {playbackUrl && activeRecordingId && (
@@ -936,11 +902,7 @@ export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: Recordi
           <CardHeader className="pb-2">
             <CardTitle className="text-base">Playback</CardTitle>
             <CardDescription className="text-xs">
-              Segment {activeRecordingId}.
-              {playbackDetectionsLoading
-                ? " Loading detection data…"
-                : ` ${playbackDetections.length} detection(s) indexed (not shown on video).`}
-              URL expires quickly; press Play on another row to refresh.
+              Segment {activeRecordingId}. URL expires quickly; press Play on another row to refresh.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -961,23 +923,24 @@ export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: Recordi
 
       <Card className="surface-panel overflow-hidden">
         <CardContent className="p-0">
-          <div className="recordings-table-scroll max-h-[15rem] overflow-auto">
+          <div className="recordings-table-scroll max-h-[34rem] overflow-auto">
             <table className="enterprise-table w-full text-sm">
               <thead className="sticky top-0 z-10">
                 <tr>
-                  <th className="min-w-28">Camera</th>
-                  <th>Start</th>
-                  <th>End</th>
-                  <th>Duration</th>
-                  <th>Type</th>
-                  <th>Size</th>
-                  <th className="whitespace-nowrap">Actions</th>
+                  <th className="w-40 whitespace-nowrap align-middle">Preview</th>
+                  <th className="min-w-28 align-middle">Camera</th>
+                  <th className="align-middle">Start</th>
+                  <th className="align-middle">End</th>
+                  <th className="align-middle">Duration</th>
+                  <th className="align-middle">Type</th>
+                  <th className="align-middle">Size</th>
+                  <th className="whitespace-nowrap align-middle">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.length === 0 && !loading ? (
                   <tr>
-                    <td colSpan={7} className="p-6 text-center text-muted-foreground">
+                    <td colSpan={8} className="p-6 text-center text-muted-foreground">
                       No recordings in this range. Live webcam segments appear here after upload completes.
                     </td>
                   </tr>
@@ -986,7 +949,10 @@ export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: Recordi
                     const cameraName = displayRecordingCameraName(r, cameraNameById)
                     return (
                       <tr key={r.id}>
-                        <td className="p-2 align-top min-w-28">
+                        <td className="p-2 align-middle">
+                          <RecordingPreviewThumbnail url={r.preview_url} />
+                        </td>
+                        <td className="p-2 align-middle min-w-28">
                           <div
                             className="font-medium text-foreground whitespace-nowrap overflow-hidden text-ellipsis"
                             title={cameraName}
@@ -994,18 +960,18 @@ export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: Recordi
                             {cameraName}
                           </div>
                         </td>
-                        <td className="p-2 align-top whitespace-nowrap">{formatDt(r.start_time)}</td>
-                        <td className="p-2 align-top whitespace-nowrap">{formatDt(r.end_time)}</td>
-                        <td className="p-2 align-top">
+                        <td className="p-2 align-middle whitespace-nowrap">{formatDt(r.start_time)}</td>
+                        <td className="p-2 align-middle whitespace-nowrap">{formatDt(r.end_time)}</td>
+                        <td className="p-2 align-middle">
                           {r.duration_seconds != null ? `${r.duration_seconds.toFixed(0)}s` : "—"}
                         </td>
-                        <td className="p-2 align-top">
+                        <td className="p-2 align-middle">
                           <Badge variant="outline" className="text-xs font-normal">
                             {r.file_type.includes("webm") ? "WebM" : r.file_type.includes("mp4") ? "MP4" : r.file_type}
                           </Badge>
                         </td>
-                        <td className="p-2 align-top">{formatBytes(r.size_bytes)}</td>
-                        <td className="p-2 align-top">
+                        <td className="p-2 align-middle">{formatBytes(r.size_bytes)}</td>
+                        <td className="p-2 align-middle">
                           <div className="flex items-center gap-2 whitespace-nowrap">
                             <Button
                               type="button"
@@ -1033,70 +999,6 @@ export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: Recordi
                       </tr>
                     )
                   })
-                )}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card className="surface-panel overflow-hidden">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base">Object detections (AI processing)</CardTitle>
-          <CardDescription className="text-xs">
-            YOLOv8n on stored segments. Showing {detRows.length} of {detTotal} in range — run the ai-processor service to
-            populate results.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="p-0">
-          <div className="recordings-table-scroll max-h-[15rem] overflow-auto">
-            <table className="enterprise-table w-full text-sm">
-              <thead className="sticky top-0 z-10">
-                <tr>
-                  <th>Camera</th>
-                  <th>Type</th>
-                  <th>Confidence</th>
-                  <th>Event time</th>
-                  <th>Offset</th>
-                  <th className="whitespace-nowrap">Playback</th>
-                </tr>
-              </thead>
-              <tbody>
-                {detRows.length === 0 && !loading ? (
-                  <tr>
-                    <td colSpan={6} className="p-8 text-center text-muted-foreground">
-                      No detections in this range. After the AI worker scans recordings, rows appear here; use the same
-                      date and camera filters as above.
-                    </td>
-                  </tr>
-                ) : (
-                  detRows.map((d) => (
-                    <tr key={d.id}>
-                      <td className="p-3 align-top">
-                        {displayDetectionCameraName(d, cameraNameById, uploadedDetectionCctvBySegmentId)}
-                      </td>
-                      <td className="p-3 align-top">
-                        <Badge variant="outline" className="text-xs font-normal">
-                          {d.object_type}
-                        </Badge>
-                      </td>
-                      <td className="p-3 align-top">{d.confidence.toFixed(2)}</td>
-                      <td className="p-3 align-top whitespace-nowrap">{formatDt(d.absolute_event_time)}</td>
-                      <td className="p-3 align-top text-muted-foreground">{(d.timestamp_offset_ms / 1000).toFixed(1)}s</td>
-                      <td className="p-3 align-top">
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          className="border-primary/30 text-primary hover:bg-primary/5"
-                          onClick={() => void playFromDetection(d.id)}
-                        >
-                          <Play className="h-3.5 w-3.5 mr-1" />
-                          Play clip
-                        </Button>
-                      </td>
-                    </tr>
-                  ))
                 )}
               </tbody>
             </table>

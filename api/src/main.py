@@ -13,8 +13,19 @@ from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import Session
 from starlette.requests import Request
 
-from . import services, database, auth, schemas, recording_service, detection_service, recording_clip_search, video_file_upload
+from . import (
+    services,
+    database,
+    auth,
+    schemas,
+    recording_service,
+    detection_service,
+    recording_clip_search,
+    recording_thumbnail_service,
+    video_file_upload,
+)
 from shared.recording_clip_milvus import register_recording_clip_collection_dropped_hook
+from shared.recording_event_labels import event_labels_for_frame_detections
 
 register_recording_clip_collection_dropped_hook(recording_clip_search.invalidate_recording_clip_collection_cache)
 
@@ -386,6 +397,24 @@ async def upload_video_file(
     )
 
 
+def _recording_list_response(
+    items: List,
+    *,
+    total: int,
+    limit: int,
+    offset: int,
+) -> schemas.RecordingListResponse:
+    preview_urls = recording_thumbnail_service.attach_recording_list_previews(recording_storage, items)
+    out_items: List[schemas.RecordingSegmentOut] = []
+    for row in items:
+        out_items.append(
+            schemas.RecordingSegmentOut.model_validate(row).model_copy(
+                update={"preview_url": preview_urls.get(row.id)},
+            )
+        )
+    return schemas.RecordingListResponse(items=out_items, total=total, limit=limit, offset=offset)
+
+
 @app.get("/api/v1/recordings", response_model=schemas.RecordingListResponse)
 def list_recordings(
     camera_id: Optional[str] = None,
@@ -416,7 +445,12 @@ def list_recordings(
         ingest_source=ingest_source,
         recording_session_id=recording_session_id,
     )
-    return schemas.RecordingListResponse(items=items, total=total, limit=limit, offset=offset)
+    return _recording_list_response(
+        items,
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @app.get("/api/v1/cameras/{camera_id}/recordings", response_model=schemas.RecordingListResponse)
@@ -449,7 +483,12 @@ def list_recordings_for_camera(
         ingest_source=ingest_source,
         recording_session_id=recording_session_id,
     )
-    return schemas.RecordingListResponse(items=items, total=total, limit=limit, offset=offset)
+    return _recording_list_response(
+        items,
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @app.get("/api/v1/recordings/{recording_id}", response_model=schemas.RecordingSegmentOut)
@@ -496,8 +535,8 @@ def semantic_search_recording_frames(
     current_user: User = Depends(auth.get_current_active_user),
 ):
     top_k = max(1, min(50, int(body.top_k)))
-    # Over-fetch so filtering stale Milvus rows still yields up to top_k playable hits.
-    fetch_k = min(max(top_k * 5, top_k), 150)
+    # Over-fetch so stale-row filtering and per-segment dedup still yield up to top_k unique segments.
+    fetch_k = min(max(top_k * 10, top_k), 250)
     hits, enabled, err = recording_clip_search.run_semantic_search(
         body.query,
         top_k=fetch_k,
@@ -512,17 +551,33 @@ def semantic_search_recording_frames(
     if err:
         return schemas.SemanticSearchResponse(results=[], enabled=True, detail=err)
     raw_hit_count = len(hits)
-    hits = recording_service.filter_valid_semantic_hits(db, hits)[:top_k]
+    hits = recording_service.filter_valid_semantic_hits(db, hits)
+    hits = recording_service.dedupe_semantic_hits_by_segment(hits)[:top_k]
     if raw_hit_count and not hits:
         logger.info(
-            "semantic search: %s Milvus hit(s) removed by PostgreSQL validity filter",
+            "semantic search: %s Milvus hit(s) removed by PostgreSQL validity filter and/or segment dedup",
             raw_hit_count,
         )
+    recording_thumbnail_service.attach_semantic_search_thumbnails(db, recording_storage, hits)
+    detection_service.attach_semantic_search_detections(db, hits)
+
     items: List[schemas.SemanticSearchHit] = []
     for h in hits:
         rid = h.get("recording_segment_id")
         if not rid:
             continue
+        match_rows = h.get("match_detections") or []
+        match_schemas = [_detection_to_schema(row) for row in match_rows]
+        det_payloads = [
+            {
+                "object_type": row.object_type,
+                "confidence": row.confidence,
+                "timestamp_offset_ms": row.timestamp_offset_ms,
+                "bounding_box": row.bounding_box,
+            }
+            for row in match_rows
+        ]
+        event_label, event_labels, event_severity = event_labels_for_frame_detections(det_payloads)
         items.append(
             schemas.SemanticSearchHit(
                 vector_id=h.get("id"),
@@ -531,6 +586,11 @@ def semantic_search_recording_frames(
                 timestamp_offset_ms=int(h.get("timestamp_offset_ms") or 0),
                 similarity=float(h.get("similarity") or 0.0),
                 model_version=h.get("model_version"),
+                thumbnail_url=h.get("thumbnail_url"),
+                match_detections=match_schemas or None,
+                event_label=event_label,
+                event_labels=event_labels or None,
+                event_severity=event_severity,
             )
         )
     detail: Optional[str] = None

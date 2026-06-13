@@ -4,7 +4,7 @@ Queries for recording-linked object detections (offline AI pipeline).
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session, joinedload
@@ -90,3 +90,105 @@ def get_detection_by_id(db: Session, detection_id: str) -> Optional[RecordingDet
         .filter(RecordingDetection.id == detection_id)
         .first()
     )
+
+
+def _default_semantic_match_tolerance_ms() -> int:
+    import os
+
+    try:
+        interval_sec = float(os.environ.get("AI_FRAME_INTERVAL_SEC", "3"))
+    except ValueError:
+        interval_sec = 3.0
+    return max(500, int(interval_sec * 1000 / 2))
+
+
+def _nearest_frame_offset(
+    target_ms: int,
+    available_offsets: Sequence[int],
+    tolerance_ms: int,
+) -> Optional[int]:
+    if not available_offsets:
+        return None
+    exact = [o for o in available_offsets if o == target_ms]
+    if exact:
+        return exact[0]
+    best: Optional[int] = None
+    best_delta = tolerance_ms + 1
+    for off in available_offsets:
+        delta = abs(off - target_ms)
+        if delta <= tolerance_ms and delta < best_delta:
+            best = off
+            best_delta = delta
+    return best
+
+
+def fetch_detections_for_semantic_hits(
+    db: Session,
+    hits: List[dict],
+    *,
+    tolerance_ms: Optional[int] = None,
+) -> Dict[tuple[str, int], List[RecordingDetection]]:
+    """
+    Map each semantic hit (segment_id, timestamp_offset_ms) to YOLO detections
+    at the same sampled frame (exact offset first, then nearest within tolerance).
+    """
+    if not hits:
+        return {}
+
+    tol = tolerance_ms if tolerance_ms is not None else _default_semantic_match_tolerance_ms()
+    segment_ids: List[str] = []
+    seen_segments: set[str] = set()
+    for hit in hits:
+        sid = str(hit.get("recording_segment_id") or "").strip()
+        if sid and sid not in seen_segments:
+            seen_segments.add(sid)
+            segment_ids.append(sid)
+    if not segment_ids:
+        return {}
+
+    rows = (
+        db.query(RecordingDetection)
+        .options(joinedload(RecordingDetection.segment))
+        .filter(RecordingDetection.recording_segment_id.in_(segment_ids))
+        .all()
+    )
+    offsets_by_segment: Dict[str, set[int]] = {}
+    rows_by_segment_offset: Dict[tuple[str, int], List[RecordingDetection]] = {}
+    for row in rows:
+        sid = str(row.recording_segment_id)
+        off = int(row.timestamp_offset_ms)
+        offsets_by_segment.setdefault(sid, set()).add(off)
+        rows_by_segment_offset.setdefault((sid, off), []).append(row)
+
+    out: Dict[tuple[str, int], List[RecordingDetection]] = {}
+    for hit in hits:
+        sid = str(hit.get("recording_segment_id") or "").strip()
+        if not sid:
+            continue
+        target_ms = int(hit.get("timestamp_offset_ms") or 0)
+        key = (sid, target_ms)
+        if key in out:
+            continue
+        available = sorted(offsets_by_segment.get(sid, set()))
+        matched_off = _nearest_frame_offset(target_ms, available, tol)
+        if matched_off is None:
+            out[key] = []
+        else:
+            out[key] = rows_by_segment_offset.get((sid, matched_off), [])
+    return out
+
+
+def attach_semantic_search_detections(
+    db: Session,
+    hits: List[dict],
+    *,
+    tolerance_ms: Optional[int] = None,
+) -> None:
+    """Mutates each hit dict with ``match_detections`` (list of ORM rows)."""
+    if not hits:
+        return
+    lookup = fetch_detections_for_semantic_hits(db, hits, tolerance_ms=tolerance_ms)
+    for hit in hits:
+        sid = str(hit.get("recording_segment_id") or "").strip()
+        off = int(hit.get("timestamp_offset_ms") or 0)
+        hit["match_detections"] = lookup.get((sid, off), [])

@@ -82,6 +82,55 @@ def count_segments_pending_ai_index(db: Session) -> int:
     )
 
 
+def _semantic_hit_better_than(candidate: Dict[str, Any], incumbent: Dict[str, Any]) -> bool:
+    """True when candidate should replace incumbent for the same recording segment."""
+    cand_sim = float(candidate.get("similarity") or 0.0)
+    inc_sim = float(incumbent.get("similarity") or 0.0)
+    if cand_sim > inc_sim:
+        return True
+    if cand_sim < inc_sim:
+        return False
+    cand_off = int(candidate.get("timestamp_offset_ms") or 0)
+    inc_off = int(incumbent.get("timestamp_offset_ms") or 0)
+    return cand_off < inc_off
+
+
+def dedupe_semantic_hits_by_segment(hits: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Keep at most one Milvus hit per ``recording_segment_id``.
+
+    Retains the highest-similarity frame; on a tie, the earliest ``timestamp_offset_ms``.
+    Output order follows the original Milvus ranking (by the index of each retained hit).
+    """
+    if not hits:
+        return []
+
+    best_index_by_segment: Dict[str, int] = {}
+    best_hit_by_segment: Dict[str, Dict[str, Any]] = {}
+
+    for index, hit in enumerate(hits):
+        segment_id = str(hit.get("recording_segment_id") or "").strip()
+        if not segment_id:
+            continue
+        incumbent = best_hit_by_segment.get(segment_id)
+        if incumbent is None or _semantic_hit_better_than(hit, incumbent):
+            best_index_by_segment[segment_id] = index
+            best_hit_by_segment[segment_id] = hit
+
+    if not best_hit_by_segment:
+        return []
+
+    ordered_segment_ids = sorted(best_index_by_segment.keys(), key=lambda sid: best_index_by_segment[sid])
+    deduped = [best_hit_by_segment[sid] for sid in ordered_segment_ids]
+    if len(deduped) < len(hits):
+        logger.info(
+            "semantic search: deduped segment hits %s -> %s (one best match per recording_segment_id)",
+            len(hits),
+            len(deduped),
+        )
+    return deduped
+
+
 def filter_valid_semantic_hits(db: Session, hits: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
     Drop Milvus hits whose recording_segment_id is missing or no longer in PostgreSQL.

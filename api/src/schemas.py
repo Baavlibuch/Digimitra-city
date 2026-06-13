@@ -29,6 +29,7 @@ class RecordingSegmentOut(BaseModel):
     ingest_source: str
     created_at: datetime
     extra: Optional[Dict[str, Any]] = None
+    preview_url: Optional[str] = None
 
 
 class RecordingListResponse(BaseModel):
@@ -153,6 +154,11 @@ class SemanticSearchHit(BaseModel):
     timestamp_offset_ms: int
     similarity: float
     model_version: Optional[str] = None
+    thumbnail_url: Optional[str] = None
+    match_detections: Optional[List[RecordingDetectionOut]] = None
+    event_label: Optional[str] = None
+    event_labels: Optional[List[str]] = None
+    event_severity: Optional[str] = None
 
 
 class SemanticSearchResponse(BaseModel):

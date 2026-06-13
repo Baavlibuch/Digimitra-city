@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { Upload, FileVideo, Loader2, CheckCircle2, AlertCircle } from "lucide-react"
+import { Upload, FileVideo, Loader2, CheckCircle2, AlertCircle, Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -147,7 +147,7 @@ export function VideoFileUpload({ onUploaded, variant = "card" }: VideoFileUploa
 
   if (variant === "compact") {
     return (
-      <div className="flex flex-col items-end gap-1 shrink-0">
+      <div className="flex flex-col gap-0.5">
         <input
           ref={fileInputRef}
           type="file"
@@ -161,21 +161,20 @@ export function VideoFileUpload({ onUploaded, variant = "card" }: VideoFileUploa
           type="button"
           size="sm"
           variant="secondary"
-          className="border-border"
+          className="filter-pill h-6 w-6 shrink-0 p-0"
           disabled={uploading}
           onClick={() => fileInputRef.current?.click()}
+          aria-label="Add recording"
+          title="Add recording"
         >
           {uploading ? (
-            <>
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              Adding…
-            </>
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
           ) : (
-            "Add"
+            <Plus className="h-3.5 w-3.5" />
           )}
         </Button>
         {error && (
-          <p className="text-xs text-red-400 max-w-[200px] text-right" role="alert">
+          <p className="max-w-[12rem] text-[10px] leading-snug text-red-400" role="alert">
             {error}
           </p>
         )}

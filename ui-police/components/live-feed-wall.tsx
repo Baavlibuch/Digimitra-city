@@ -217,31 +217,49 @@ function CctvPreview({ streamUrl, muted = true }: { streamUrl?: string; muted?: 
 
 const LOCAL_VIDEO_ACCEPT = "video/mp4,video/webm,video/quicktime,.mp4,.mov,.webm,.avi"
 
-type LocalVideoFeedEntry = { feed: CameraFeed; objectUrl: string }
+type LocalVideoFeedEntry = { feed: CameraFeed; objectUrl: string; cctvNumber: number }
 
-// TEMP: Demo-only event banners for uploaded video verification.
-type DemoUploadBanner = {
-  label: string
-  badgeClass: string
-  showHighChip: boolean
+const LOCAL_VIDEO_CCTV_POOL_MAX = 12
+
+function pickRandomCctvNumber(used: Set<number>): number {
+  const available: number[] = []
+  for (let i = 1; i <= LOCAL_VIDEO_CCTV_POOL_MAX; i++) {
+    if (!used.has(i)) available.push(i)
+  }
+  if (available.length > 0) {
+    return available[Math.floor(Math.random() * available.length)]
+  }
+  return Math.floor(Math.random() * LOCAL_VIDEO_CCTV_POOL_MAX) + 1
 }
 
-function demoUploadVideoBanner(uploadIndex: number): DemoUploadBanner | null {
-  if (uploadIndex === 0) {
-    return {
-      label: "🚨 Accident Alert",
-      badgeClass: "bg-red-600/95 ring-red-400/50",
-      showHighChip: true,
-    }
+// Demo-only live feed banner overrides (presentation layer). Set false to disable.
+const DEMO_LIVE_FEED_BANNERS_ENABLED = true
+
+const LIVE_FEED_BANNERS: Record<number, string> = {
+  1: "Accident Alert",
+  2: "Suspicious Activity",
+  3: "Suspicious Activity",
+  7: "Accident Alert",
+  8: "Crowd Formation",
+  9: "Crowd Formation",
+}
+
+function liveFeedNumber(feed: CameraFeed, localUploadIndex?: number): number | undefined {
+  if (feed.sourceType === "local_video" && localUploadIndex != null) {
+    return localUploadIndex + 1
   }
-  if (uploadIndex === 1) {
-    return {
-      label: "🚨 Suspicious Activity",
-      badgeClass: "bg-red-600/95 ring-red-400/50",
-      showHighChip: true,
-    }
+  const asNumber = Number(feed.id)
+  return Number.isFinite(asNumber) && asNumber >= 1 ? asNumber : undefined
+}
+
+function demoLiveFeedBannerText(
+  feedNumber: number | undefined,
+  existingBannerText: string | undefined,
+): string | undefined {
+  if (!DEMO_LIVE_FEED_BANNERS_ENABLED || feedNumber == null) {
+    return existingBannerText
   }
-  return null
+  return LIVE_FEED_BANNERS[feedNumber] ?? existingBannerText
 }
 
 function LocalVideoTileBody({
@@ -760,20 +778,23 @@ export function LiveFeedWall() {
     }
 
     const objectUrl = URL.createObjectURL(file)
-    const baseName = file.name.replace(/\.[^.]+$/, "") || "Demo video"
-    const feed: CameraFeed = {
-      id: `local-video-${Date.now()}`,
-      name: baseName,
-      location: "Local file",
-      status: "online",
-      lastActivity: "Local video",
-      priority: 3,
-      isRecording: false,
-      hasAudio: false,
-      resolution: "1080p",
-      sourceType: "local_video",
-    }
-    setLocalVideoFeeds((prev) => [...prev, { feed, objectUrl }])
+    setLocalVideoFeeds((prev) => {
+      const usedNumbers = new Set(prev.map((entry) => entry.cctvNumber))
+      const cctvNumber = pickRandomCctvNumber(usedNumbers)
+      const feed: CameraFeed = {
+        id: `local-video-${Date.now()}`,
+        name: `CCTV ${cctvNumber}`,
+        location: "Market Area",
+        status: "online",
+        lastActivity: "Local video",
+        priority: 3,
+        isRecording: false,
+        hasAudio: false,
+        resolution: "1080p",
+        sourceType: "local_video",
+      }
+      return [...prev, { feed, objectUrl, cctvNumber }]
+    })
   }
 
   const nextCustomFeedId = () => {
@@ -1050,7 +1071,9 @@ export function LiveFeedWall() {
           const sceneStatus = liveWs.sceneStatusByCameraId.get(feed.id)
           const rawTileAlert =
             wsAlert?.message ?? sceneStatus?.message ?? feed.aiSuggestion
-          const tileAlertMessage = isIdleSceneMessage(rawTileAlert) ? undefined : rawTileAlert
+          const existingBannerText = isIdleSceneMessage(rawTileAlert) ? undefined : rawTileAlert
+          const feedNumber = liveFeedNumber(feed, localVideoUploadOrderByFeedId.get(feed.id))
+          const tileAlertMessage = demoLiveFeedBannerText(feedNumber, existingBannerText)
           const hasLiveHighlight = Boolean(liveWsEnabled && wsAlert)
 
           return (
@@ -1128,28 +1151,6 @@ export function LiveFeedWall() {
                   <div className={`w-3 h-3 rounded-full ${getStatusColor(feed.status)}`} />
                 </div>
 
-                {/* TEMP: Demo-only event banners for uploaded video verification. */}
-                {feed.sourceType === "local_video" && (() => {
-                  const uploadIndex = localVideoUploadOrderByFeedId.get(feed.id) ?? 0
-                  const banner = demoUploadVideoBanner(uploadIndex)
-                  if (!banner) return null
-                  return (
-                    <div className="absolute top-2 left-8 z-20 pointer-events-none">
-                      <span
-                        className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-semibold text-white shadow-md ring-1 backdrop-blur-sm ${banner.badgeClass}`}
-                      >
-                        {banner.showHighChip && (
-                          <span className="rounded bg-red-950/70 px-1 py-px text-[9px] font-bold uppercase tracking-wide">
-                            🔴 HIGH
-                          </span>
-                        )}
-                        {banner.showHighChip && <span className="opacity-75">•</span>}
-                        <span>{banner.label}</span>
-                      </span>
-                    </div>
-                  )
-                })()}
-
                 {/* REC badge: browser upload session for webcams; mock flag for CCTV tiles */}
                 {feed.sourceType !== "local_video" &&
                   ((feed.sourceType === "cctv" && feed.isRecording) ||
@@ -1181,15 +1182,13 @@ export function LiveFeedWall() {
               {/* Feed metadata */}
               <div className="p-3">
                 <div className="flex items-center justify-between mb-2">
-                  <h3 className="font-medium text-foreground text-sm">
-                    {feed.sourceType === "local_video" ? "CCTV 1" : feed.name}
-                  </h3>
+                  <h3 className="font-medium text-foreground text-sm">{feed.name}</h3>
                   <Badge variant={feed.status === "online" ? "default" : "destructive"} className="text-xs">
                     {feed.status}
                   </Badge>
                 </div>
                 <div className="flex items-center justify-between text-xs text-muted-foreground">
-                  <span>{feed.sourceType === "local_video" ? "Market Area" : feed.location}</span>
+                  <span>{feed.location}</span>
                   <span>{feed.resolution}</span>
                 </div>
                 <div className="flex items-center justify-between text-xs text-muted-foreground mt-1">

@@ -14,7 +14,7 @@ import { LiveFeedWall } from "@/components/live-feed-wall"
 import { RecordingsHistory } from "@/components/recordings-history"
 import { LoadingScreen } from "@/components/loading-screen"
 import { Settings } from "@/components/settings"
-import { Camera, AlertTriangle, Activity, MapPin, Search, Calendar, Mic, Clapperboard } from "lucide-react"
+import { Camera, AlertTriangle, Activity, MapPin, Search, Calendar, Clapperboard, Monitor } from "lucide-react"
 const NAV_SECTION_IDS = new Set([
   "dashboard",
   "map",
@@ -123,21 +123,21 @@ export function Dashboard({ onSignOut }: DashboardProps) {
                 </CardHeader>
                 <CardContent>
                   <div className="flex flex-wrap gap-3">
+                    <Button variant="secondary" onClick={() => handleNavSection("feeds")}>
+                      <Monitor className="w-4 h-4 mr-2" />
+                      Live Feed
+                    </Button>
                     <Button variant="secondary" onClick={() => handleNavSection("recordings")}>
                       <Clapperboard className="w-4 h-4 mr-2" />
-                      Recording history
+                      Recording History
                     </Button>
-                    <Button variant="secondary" onClick={() => handleNavSection("search")}>
-                      <Mic className="w-4 h-4 mr-2" />
-                      Voice Command
+                    <Button variant="secondary" onClick={() => handleNavSection("events")}>
+                      <Calendar className="w-4 h-4 mr-2" />
+                      Events & Alerts
                     </Button>
                     <Button variant="secondary" onClick={() => handleNavSection("map")}>
                       <MapPin className="w-4 h-4 mr-2" />
                       Show Map
-                    </Button>
-                    <Button variant="secondary" onClick={() => handleNavSection("events")}>
-                      <Calendar className="w-4 h-4 mr-2" />
-                      Open Events
                     </Button>
                     <Button onClick={() => handleNavSection("search")}>
                       <Search className="w-4 h-4 mr-2" />
