@@ -49,6 +49,7 @@ import {
 type EventSeverity = "medium" | "high" | "critical"
 
 const DISMISSED_EVENTS_STORAGE_KEY = "digimitra.eventsAlerts.dismissedEventIds.v1"
+const INITIAL_HIGH_SEVERITY_FEED_LIMIT = 50
 
 function loadDismissedEventIds(): Set<string> {
   if (typeof window === "undefined") return new Set()
@@ -132,6 +133,27 @@ function formatEventTime(iso: string): string {
   } catch {
     return iso
   }
+}
+
+function severityRank(severity: EventSeverity): number {
+  switch (severity) {
+    case "critical":
+      return 0
+    case "high":
+      return 1
+    case "medium":
+      return 2
+    default:
+      return 3
+  }
+}
+
+function sortEventsBySeverityThenTime(events: DisplayEvent[]): DisplayEvent[] {
+  return [...events].sort((a, b) => {
+    const severityDiff = severityRank(a.severity) - severityRank(b.severity)
+    if (severityDiff !== 0) return severityDiff
+    return b.absoluteEventTime.localeCompare(a.absoluteEventTime)
+  })
 }
 
 function buildDisplayEvents(
@@ -250,9 +272,10 @@ export function EventsAlerts() {
   const [token, setToken] = useState<string | null>(null)
   const surveillanceTokenRef = useRef<string | null>(null)
   const [rawDetections, setRawDetections] = useState<DetectionDto[]>([])
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [cameraNameById, setCameraNameById] = useState<Map<string, string>>(new Map())
+  const useInitialHighSeverityFeedRef = useRef(true)
 
   const [playbackUrl, setPlaybackUrl] = useState<string | null>(null)
   const [activeRecordingId, setActiveRecordingId] = useState<string | null>(null)
@@ -437,20 +460,31 @@ export function EventsAlerts() {
     [getSurveillanceAccessTokenOrNull, loading, openPlayback],
   )
 
-  const filteredEvents = useMemo(
-    () =>
-      visibleEvents.filter((event) => {
-        const matchesFilter = filter === "all" || event.status === filter
-        const matchesSeverity = severityFilter === "all" || event.severity === severityFilter
-        const matchesSearch =
-          event.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          event.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          event.location.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          event.camera.toLowerCase().includes(searchQuery.toLowerCase())
-        return matchesFilter && matchesSeverity && matchesSearch
-      }),
-    [visibleEvents, filter, severityFilter, searchQuery],
-  )
+  const filteredEvents = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase()
+    const useInitialHighSeverityFeed =
+      useInitialHighSeverityFeedRef.current && severityFilter === "all" && !query
+
+    const filtered = visibleEvents.filter((event) => {
+      const matchesFilter = filter === "all" || event.status === filter
+      const matchesSeverity = useInitialHighSeverityFeed
+        ? event.severity === "critical" || event.severity === "high"
+        : severityFilter === "all" || event.severity === severityFilter
+      const matchesSearch =
+        !query ||
+        event.title.toLowerCase().includes(query) ||
+        event.description.toLowerCase().includes(query) ||
+        event.location.toLowerCase().includes(query) ||
+        event.camera.toLowerCase().includes(query)
+      return matchesFilter && matchesSeverity && matchesSearch
+    })
+
+    const sorted = sortEventsBySeverityThenTime(filtered)
+
+    return useInitialHighSeverityFeed
+      ? sorted.slice(0, INITIAL_HIGH_SEVERITY_FEED_LIMIT)
+      : sorted
+  }, [visibleEvents, filter, severityFilter, searchQuery])
 
   const EVENT_LIST_VISIBLE_COUNT = 5
   const eventItemMeasureRef = useRef<HTMLDivElement>(null)
@@ -621,7 +655,7 @@ export function EventsAlerts() {
         </p>
       )}
 
-      {loading && events.length === 0 && (
+      {(loading || isCheckingAuth) && events.length === 0 && (
         <p className="text-sm text-muted-foreground" role="status">
           Loading detections from surveillance API…
         </p>
@@ -648,7 +682,13 @@ export function EventsAlerts() {
               <SelectItem value="new">New</SelectItem>
             </SelectContent>
           </Select>
-          <Select value={severityFilter} onValueChange={setSeverityFilter}>
+          <Select
+            value={severityFilter}
+            onValueChange={(value) => {
+              useInitialHighSeverityFeedRef.current = false
+              setSeverityFilter(value)
+            }}
+          >
             <SelectTrigger className="w-32">
               <SelectValue />
             </SelectTrigger>
@@ -754,11 +794,7 @@ export function EventsAlerts() {
                   ref={index === 0 ? eventItemMeasureRef : undefined}
                   className="h-full min-h-0"
                 >
-                  <Card
-                    className={`surface-panel h-full flex flex-col transition-colors hover:shadow-[var(--shadow-elevated)] ${
-                      event.severity === "critical" ? "ring-2 ring-red-400/50" : ""
-                    }`}
-                  >
+                  <Card className="surface-panel h-full flex flex-col transition-colors hover:shadow-[var(--shadow-elevated)]">
                     <CardContent className="flex flex-1 flex-col gap-2 p-2">
                       <div className="flex items-center gap-2">
                         <div
@@ -950,7 +986,7 @@ export function EventsAlerts() {
             </div>
           )}
 
-          {filteredEvents.length === 0 && !loading && (
+          {filteredEvents.length === 0 && !loading && !isCheckingAuth && (
             <Card className="surface-panel">
               <CardContent className="py-12 text-center">
                 <AlertTriangle className="w-12 h-12 text-muted-foreground mx-auto mb-4" />

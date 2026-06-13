@@ -219,6 +219,9 @@ const LOCAL_VIDEO_ACCEPT = "video/mp4,video/webm,video/quicktime,.mp4,.mov,.webm
 
 type LocalVideoFeedEntry = { feed: CameraFeed; objectUrl: string; cctvNumber: number }
 
+/** Survives Live Feed unmount/remount within the same page session; cleared on full refresh. */
+let localVideoFeedsSessionCache: LocalVideoFeedEntry[] = []
+
 const LOCAL_VIDEO_CCTV_POOL_MAX = 12
 
 function pickRandomCctvNumber(used: Set<number>): number {
@@ -488,18 +491,21 @@ export function LiveFeedWall() {
   const [cctvConnectionStatus, setCctvConnectionStatus] = useState<CctvConnectionStatus>("idle")
   const [cctvConnectionMessage, setCctvConnectionMessage] = useState("")
   const [hasLoadedPersistedState, setHasLoadedPersistedState] = useState(false)
-  const [localVideoFeeds, setLocalVideoFeeds] = useState<LocalVideoFeedEntry[]>([])
+  const [localVideoFeeds, setLocalVideoFeeds] = useState<LocalVideoFeedEntry[]>(
+    () => localVideoFeedsSessionCache,
+  )
   const localVideoFileInputRef = useRef<HTMLInputElement>(null)
-  const localVideoFeedsRef = useRef(localVideoFeeds)
-  localVideoFeedsRef.current = localVideoFeeds
 
-  useEffect(() => {
-    return () => {
-      for (const entry of localVideoFeedsRef.current) {
-        URL.revokeObjectURL(entry.objectUrl)
-      }
-    }
-  }, [])
+  const updateLocalVideoFeeds = useCallback(
+    (updater: (prev: LocalVideoFeedEntry[]) => LocalVideoFeedEntry[]) => {
+      setLocalVideoFeeds((prev) => {
+        const next = updater(prev)
+        localVideoFeedsSessionCache = next
+        return next
+      })
+    },
+    [],
+  )
 
   // Auto-assign first device to feed "1" once devices load
   useEffect(() => {
@@ -719,7 +725,7 @@ export function LiveFeedWall() {
       const confirmed = window.confirm(`Are you sure you want to remove ${localEntry.feed.name}?`)
       if (!confirmed) return
       URL.revokeObjectURL(localEntry.objectUrl)
-      setLocalVideoFeeds((prev) => prev.filter((entry) => entry.feed.id !== feedId))
+      updateLocalVideoFeeds((prev) => prev.filter((entry) => entry.feed.id !== feedId))
       setSelectedFeeds((prev) => prev.filter((id) => id !== feedId))
       setFullscreenFeed((prev) => (prev === feedId ? null : prev))
       return
@@ -778,7 +784,7 @@ export function LiveFeedWall() {
     }
 
     const objectUrl = URL.createObjectURL(file)
-    setLocalVideoFeeds((prev) => {
+    updateLocalVideoFeeds((prev) => {
       const usedNumbers = new Set(prev.map((entry) => entry.cctvNumber))
       const cctvNumber = pickRandomCctvNumber(usedNumbers)
       const feed: CameraFeed = {
