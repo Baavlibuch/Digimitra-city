@@ -15,15 +15,6 @@ import { RecordingsHistory } from "@/components/recordings-history"
 import { LoadingScreen } from "@/components/loading-screen"
 import { Settings } from "@/components/settings"
 import { Camera, AlertTriangle, Activity, MapPin, Search, Calendar, Mic, Clapperboard } from "lucide-react"
-import {
-  CAMERA_FEEDS_SYNC_EVENT,
-  buildVisibleFeeds,
-  calculateCoverageSummary,
-  formatCoverageSummaryValue,
-  isFeedActive,
-  readPersistedCameraState,
-} from "@/lib/camera-feeds"
-
 const NAV_SECTION_IDS = new Set([
   "dashboard",
   "map",
@@ -45,10 +36,6 @@ export function Dashboard({ onSignOut }: DashboardProps) {
   const [isLoading, setIsLoading] = useState(true)
   const [isSigningOut, setIsSigningOut] = useState(false)
   const [signOutError, setSignOutError] = useState<string | null>(null)
-  const [activeCameraCount, setActiveCameraCount] = useState(0)
-  const [coverageAreaValue, setCoverageAreaValue] = useState("0")
-  const [eventCount, setEventCount] = useState(0)
-  const [recentEvents, setRecentEvents] = useState<Array<{ id: string; type: string; camera: string; time: string }>>([])
 
   useEffect(() => {
     const section = searchParams.get("section")
@@ -69,63 +56,11 @@ export function Dashboard({ onSignOut }: DashboardProps) {
     return () => clearTimeout(timer)
   }, [])
 
-  useEffect(() => {
-    let cancelled = false
-
-    const syncCameraStats = async () => {
-      try {
-        const { customFeeds, feedDeviceMap, deletedFeedIds } = readPersistedCameraState()
-        const visibleFeeds = buildVisibleFeeds({ customFeeds, deletedFeedIds })
-        const devices = navigator.mediaDevices?.enumerateDevices ? await navigator.mediaDevices.enumerateDevices() : []
-        const validWebcamDeviceIds = new Set(
-          devices.filter((device) => device.kind === "videoinput").map((device) => device.deviceId)
-        )
-        const activeFeeds = visibleFeeds.filter((feed) => {
-          if (!isFeedActive(feed, feedDeviceMap)) return false
-          if (feed.sourceType === "cctv") return true
-          const mappedDeviceId = feedDeviceMap[feed.id] ?? feed.deviceId
-          if (!mappedDeviceId) return false
-          if (validWebcamDeviceIds.size === 0) return true
-          return validWebcamDeviceIds.has(mappedDeviceId)
-        })
-
-        if (cancelled) return
-        setActiveCameraCount(activeFeeds.length)
-        setCoverageAreaValue(formatCoverageSummaryValue(calculateCoverageSummary(activeFeeds)))
-      } catch {
-        if (cancelled) return
-        setActiveCameraCount(0)
-        setCoverageAreaValue("0")
-      }
-    }
-
-    void syncCameraStats()
-    setEventCount(0)
-    setRecentEvents([])
-
-    const onDeviceChange = () => {
-      void syncCameraStats()
-    }
-    const onCameraFeedsSync = () => {
-      void syncCameraStats()
-    }
-    window.addEventListener("storage", onCameraFeedsSync)
-    window.addEventListener(CAMERA_FEEDS_SYNC_EVENT, onCameraFeedsSync)
-    navigator.mediaDevices?.addEventListener?.("devicechange", onDeviceChange)
-
-    return () => {
-      cancelled = true
-      window.removeEventListener("storage", onCameraFeedsSync)
-      window.removeEventListener(CAMERA_FEEDS_SYNC_EVENT, onCameraFeedsSync)
-      navigator.mediaDevices?.removeEventListener?.("devicechange", onDeviceChange)
-    }
-  }, [])
-
   const stats = [
-    { label: "Active Cameras", value: String(activeCameraCount), icon: Camera, status: "online" },
-    { label: "Live Alerts", value: String(eventCount), icon: AlertTriangle, status: eventCount > 0 ? "warning" : "online" },
+    { label: "Active Cameras", value: "10", icon: Camera, status: "online" },
+    { label: "Live Alerts", value: "14", icon: AlertTriangle, status: "warning" },
     { label: "System Status", value: "Operational", icon: Activity, status: "online" },
-    { label: "Coverage Areas", value: coverageAreaValue, icon: MapPin, status: "online" },
+    { label: "Coverage Areas", value: "10 zones", icon: MapPin, status: "online" },
   ]
 
   const handleSignOut = async () => {
@@ -213,7 +148,6 @@ export function Dashboard({ onSignOut }: DashboardProps) {
               </Card>
             </div>
 
-            {/* ... existing stats and events code ... */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
               {stats.map((stat, index) => (
                 <Card key={index} className="surface-panel">
@@ -238,33 +172,6 @@ export function Dashboard({ onSignOut }: DashboardProps) {
                 </Card>
               ))}
             </div>
-
-            {/* Recent Events */}
-            <Card className="surface-panel">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <AlertTriangle className="w-5 h-5 text-yellow-500" />
-                  Recent Events
-                </CardTitle>
-                <CardDescription>Latest AI-detected activities and alerts</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  {recentEvents.map((event) => (
-                    <div key={event.id} className="flex items-center justify-between p-3 rounded-lg border border-border/60 bg-muted/40">
-                      <div className="flex items-center gap-3">
-                        <Badge variant="secondary">event</Badge>
-                        <div>
-                          <p className="font-medium text-foreground">{event.type}</p>
-                          <p className="text-sm text-muted-foreground">{event.camera}</p>
-                        </div>
-                      </div>
-                      <span className="text-sm text-muted-foreground">{event.time}</span>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
           </>
         )
     }

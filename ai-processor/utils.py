@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import io
 import logging
 import os
 import tempfile
-from typing import Optional
+from typing import Any, Optional
 
+import cv2
 from minio import Minio
 from minio.error import S3Error
 
@@ -76,3 +78,53 @@ def download_object(
                 _allow_bucket_fallback=False,
             )
         raise
+
+
+def upload_detection_preview(
+    client: Minio,
+    bucket: str,
+    segment_id: str,
+    camera_id: str,
+    offset_ms: int,
+    frame_bgr: Any,
+) -> Optional[str]:
+    """Encode a detection frame as JPEG and upload to MinIO; returns object key."""
+    resolved_bucket = bucket or minio_bucket_name()
+    object_key = f"detection-previews/{camera_id}/{segment_id}/{offset_ms}.jpg"
+    try:
+        ok, buf = cv2.imencode(".jpg", frame_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+        if not ok:
+            logger.warning("JPEG encode failed segment=%s offset_ms=%s", segment_id, offset_ms)
+            return None
+        data = buf.tobytes()
+        client.put_object(
+            bucket_name=resolved_bucket,
+            object_name=object_key,
+            data=io.BytesIO(data),
+            length=len(data),
+            content_type="image/jpeg",
+            metadata={
+                "camera_id": camera_id,
+                "recording_segment_id": segment_id,
+                "timestamp_offset_ms": str(offset_ms),
+            },
+        )
+        logger.debug("Uploaded detection preview: bucket=%s key=%s", resolved_bucket, object_key)
+        return object_key
+    except S3Error as err:
+        logger.warning(
+            "Preview upload failed segment=%s offset_ms=%s bucket=%s: %s",
+            segment_id,
+            offset_ms,
+            resolved_bucket,
+            err,
+        )
+        return None
+    except Exception as exc:
+        logger.warning(
+            "Preview upload failed segment=%s offset_ms=%s: %s",
+            segment_id,
+            offset_ms,
+            exc,
+        )
+        return None

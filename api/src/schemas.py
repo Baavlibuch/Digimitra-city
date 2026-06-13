@@ -58,6 +58,7 @@ class RecordingDetectionOut(BaseModel):
     bounding_box: Dict[str, Any]
     created_at: datetime
     absolute_event_time: datetime
+    preview_url: Optional[str] = None
 
 
 class DetectionListResponse(BaseModel):

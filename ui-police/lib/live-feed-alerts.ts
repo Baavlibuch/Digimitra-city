@@ -1,14 +1,17 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { eventBannerLabel } from "@/lib/detection-overlay-utils"
+import {
+  buildIncidentCandidatesFromDetections,
+  type IncidentSeverity,
+} from "@/lib/event-deduplication"
 import {
   fetchDetections,
   fetchSurveillanceAccessToken,
   type DetectionDto,
 } from "@/lib/surveillance-api"
 
-export type FeedAlertSeverity = "medium" | "high" | "critical"
+export type FeedAlertSeverity = IncidentSeverity
 
 export type FeedAlert = {
   cameraId: string
@@ -49,15 +52,26 @@ function severityFromLabel(label: string): FeedAlertSeverity | "low" {
   }
 }
 
-function groupDetectionsByFrame(detections: DetectionDto[]): DetectionDto[][] {
-  const map = new Map<string, DetectionDto[]>()
-  for (const d of detections) {
-    const key = `${d.recording_segment_id}:${d.timestamp_offset_ms}`
-    const group = map.get(key)
-    if (group) group.push(d)
-    else map.set(key, [d])
-  }
-  return Array.from(map.values())
+function overlayMessage(title: string, absoluteEventTime: string, severity: FeedAlertSeverity): string {
+  const time = formatShortTime(absoluteEventTime)
+  const prefix = severity === "critical" ? "⚠️ " : ""
+  return time ? `${prefix}${title} — ${time}` : `${prefix}${title}`
+}
+
+export function buildFeedAlerts(detections: DetectionDto[]): FeedAlert[] {
+  const incidents = buildIncidentCandidatesFromDetections(detections, {
+    severityFromLabel,
+    isUploadedSource: (cameraId) => cameraId === "file-upload",
+  })
+
+  return incidents.map((incident) => ({
+    cameraId: incident.cameraId,
+    title: incident.incidentType,
+    message: overlayMessage(incident.incidentType, incident.firstDetectedAt, incident.severity),
+    severity: incident.severity,
+    absoluteEventTime: incident.firstDetectedAt,
+    detectionId: incident.detectionId,
+  }))
 }
 
 function formatShortTime(iso: string): string {
@@ -83,39 +97,6 @@ function formatRelativeTime(iso: string): string {
   } catch {
     return ""
   }
-}
-
-function overlayMessage(title: string, absoluteEventTime: string, severity: FeedAlertSeverity): string {
-  const time = formatShortTime(absoluteEventTime)
-  const prefix = severity === "critical" ? "⚠️ " : ""
-  return time ? `${prefix}${title} — ${time}` : `${prefix}${title}`
-}
-
-export function buildFeedAlerts(detections: DetectionDto[]): FeedAlert[] {
-  const alerts: FeedAlert[] = []
-
-  for (const group of groupDetectionsByFrame(detections)) {
-    const label = eventBannerLabel(group)
-    if (!label) continue
-    const severity = severityFromLabel(label)
-    if (severity === "low") continue
-
-    const anchor = [...group].sort((a, b) => b.confidence - a.confidence)[0]
-    if (!anchor) continue
-
-    alerts.push({
-      cameraId: anchor.camera_id,
-      title: label,
-      message: overlayMessage(label, anchor.absolute_event_time, severity),
-      severity,
-      absoluteEventTime: anchor.absolute_event_time,
-      detectionId: anchor.id,
-    })
-  }
-
-  return alerts.sort(
-    (a, b) => new Date(b.absoluteEventTime).getTime() - new Date(a.absoluteEventTime).getTime(),
-  )
 }
 
 export function alertsByCameraId(alerts: FeedAlert[]): Map<string, FeedAlert> {

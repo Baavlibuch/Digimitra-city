@@ -9,7 +9,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Input } from "@/components/ui/input"
 import {
   AlertTriangle,
-  Camera,
   Clock,
   MapPin,
   Search,
@@ -27,6 +26,7 @@ import {
   Download,
   Pin,
   RefreshCw,
+  Trash2,
 } from "lucide-react"
 import { useAuth } from "@/components/auth-provider"
 import {
@@ -37,13 +37,36 @@ import {
   fetchSurveillanceAccessToken,
   type DetectionDto,
 } from "@/lib/surveillance-api"
-import { eventBannerLabel } from "@/lib/detection-overlay-utils"
+import {
+  buildIncidentCandidatesFromDetections,
+  buildMergedIncidentDescription,
+} from "@/lib/event-deduplication"
 import {
   RecordingPlaybackPlayer,
   type PlaybackEntryContext,
 } from "@/components/recording-playback-player"
 
 type EventSeverity = "medium" | "high" | "critical"
+
+const DISMISSED_EVENTS_STORAGE_KEY = "digimitra.eventsAlerts.dismissedEventIds.v1"
+
+function loadDismissedEventIds(): Set<string> {
+  if (typeof window === "undefined") return new Set()
+  try {
+    const raw = window.localStorage.getItem(DISMISSED_EVENTS_STORAGE_KEY)
+    if (!raw) return new Set()
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return new Set()
+    return new Set(parsed.filter((id): id is string => typeof id === "string"))
+  } catch {
+    return new Set()
+  }
+}
+
+function persistDismissedEventIds(ids: Set<string>): void {
+  if (typeof window === "undefined") return
+  window.localStorage.setItem(DISMISSED_EVENTS_STORAGE_KEY, JSON.stringify([...ids]))
+}
 
 interface DisplayEvent {
   id: string
@@ -59,6 +82,26 @@ interface DisplayEvent {
   absoluteEventTime: string
   aiConfidence: number
   status: "new"
+  previewFrame?: string
+}
+
+function detectionPreviewFrame(detection: DetectionDto): string | undefined {
+  const extended = detection as DetectionDto & {
+    preview_frame?: string
+    previewFrame?: string
+    preview_url?: string
+    previewUrl?: string
+    thumbnail?: string
+    thumbnail_url?: string
+  }
+  return (
+    extended.preview_frame ??
+    extended.previewFrame ??
+    extended.preview_url ??
+    extended.previewUrl ??
+    extended.thumbnail ??
+    extended.thumbnail_url
+  )
 }
 
 /** Severity mapping lives only in this file — not shared utilities. */
@@ -80,17 +123,6 @@ function severityFromLabel(label: string): EventSeverity | "low" {
   }
 }
 
-function groupDetectionsByFrame(detections: DetectionDto[]): DetectionDto[][] {
-  const map = new Map<string, DetectionDto[]>()
-  for (const d of detections) {
-    const key = `${d.recording_segment_id}:${d.timestamp_offset_ms}`
-    const group = map.get(key)
-    if (group) group.push(d)
-    else map.set(key, [d])
-  }
-  return Array.from(map.values())
-}
-
 function formatEventTime(iso: string): string {
   try {
     return new Date(iso).toLocaleString(undefined, {
@@ -102,48 +134,78 @@ function formatEventTime(iso: string): string {
   }
 }
 
-function buildDescription(group: DetectionDto[]): string {
-  const types = [...new Set(group.map((d) => d.object_type))]
-  const typeList = types.join(", ")
-  return `${group.length} detection(s) at this moment — objects: ${typeList}`
-}
-
 function buildDisplayEvents(
   detections: DetectionDto[],
   cameraNameById: Map<string, string>,
 ): DisplayEvent[] {
-  const events: DisplayEvent[] = []
-  for (const group of groupDetectionsByFrame(detections)) {
-    const label = eventBannerLabel(group)
-    if (!label) continue
-    const severity = severityFromLabel(label)
-    if (severity === "low") continue
+  const uploadedCctvBySegmentId = buildUploadedCctvLabels(detections, cameraNameById)
+  const incidents = buildIncidentCandidatesFromDetections(detections, {
+    severityFromLabel,
+    isUploadedSource: (cameraId) => isUploadedDetection(cameraId, cameraNameById),
+    previewFrame: detectionPreviewFrame,
+  })
 
-    const anchor = [...group].sort((a, b) => b.confidence - a.confidence)[0]
-    if (!anchor) continue
+  return incidents.map((incident) => {
+    const cameraLabel = displayDetectionCameraName(
+      incident.anchorDetection,
+      cameraNameById,
+      uploadedCctvBySegmentId,
+    )
 
-    const cameraLabel = cameraNameById.get(anchor.camera_id) ?? anchor.camera_id
-
-    events.push({
-      id: anchor.id,
-      detectionId: anchor.id,
-      recordingSegmentId: anchor.recording_segment_id,
-      type: label,
-      severity,
-      title: label,
-      description: buildDescription(group),
+    return {
+      id: incident.id,
+      detectionId: incident.detectionId,
+      recordingSegmentId: incident.recordingSegmentId,
+      type: incident.incidentType,
+      severity: incident.severity,
+      title: incident.incidentType,
+      description: buildMergedIncidentDescription(incident.mergedGroups),
       camera: cameraLabel,
       location: cameraLabel,
-      timestamp: formatEventTime(anchor.absolute_event_time),
-      absoluteEventTime: anchor.absolute_event_time,
-      aiConfidence: Math.max(...group.map((d) => d.confidence)),
+      timestamp: formatEventTime(incident.firstDetectedAt),
+      absoluteEventTime: incident.firstDetectedAt,
+      aiConfidence: incident.aiConfidence,
       status: "new",
-    })
-  }
+      previewFrame: incident.previewFrame,
+    }
+  })
+}
 
-  return events.sort(
-    (a, b) => new Date(b.absoluteEventTime).getTime() - new Date(a.absoluteEventTime).getTime(),
-  )
+function isUploadedDetection(cameraId: string, cameraNameById: Map<string, string>): boolean {
+  return cameraId === "file-upload" || cameraNameById.get(cameraId) === "Uploaded video"
+}
+
+function buildUploadedCctvLabels(
+  detections: DetectionDto[],
+  cameraNameById: Map<string, string>,
+): Map<string, string> {
+  const segmentFirstTime = new Map<string, string>()
+  for (const d of detections) {
+    if (!isUploadedDetection(d.camera_id, cameraNameById)) continue
+    const existing = segmentFirstTime.get(d.recording_segment_id)
+    if (!existing || d.absolute_event_time < existing) {
+      segmentFirstTime.set(d.recording_segment_id, d.absolute_event_time)
+    }
+  }
+  const orderedSegmentIds = [...segmentFirstTime.entries()]
+    .sort((a, b) => a[1].localeCompare(b[1]))
+    .map(([segmentId]) => segmentId)
+  const labels = new Map<string, string>()
+  for (let i = 0; i < orderedSegmentIds.length; i++) {
+    labels.set(orderedSegmentIds[i], `CCTV ${i + 1}`)
+  }
+  return labels
+}
+
+function displayDetectionCameraName(
+  detection: DetectionDto,
+  cameraNameById: Map<string, string>,
+  uploadedCctvBySegmentId: Map<string, string>,
+): string {
+  if (isUploadedDetection(detection.camera_id, cameraNameById)) {
+    return uploadedCctvBySegmentId.get(detection.recording_segment_id) ?? "CCTV 1"
+  }
+  return cameraNameById.get(detection.camera_id) ?? detection.camera_id.slice(0, 8)
 }
 
 function localYmd(d: Date) {
@@ -200,6 +262,7 @@ export function EventsAlerts() {
   const [playbackEntryContext, setPlaybackEntryContext] = useState<PlaybackEntryContext>({ mode: "normal" })
   const [activeSegmentStart, setActiveSegmentStart] = useState<string | null>(null)
   const [playbackLoadingId, setPlaybackLoadingId] = useState<string | null>(null)
+  const [dismissedEventIds, setDismissedEventIds] = useState<Set<string>>(() => loadDismissedEventIds())
 
   const getSurveillanceAccessTokenOrNull = useCallback((): string | null => {
     if (surveillanceTokenRef.current) return surveillanceTokenRef.current
@@ -212,9 +275,14 @@ export function EventsAlerts() {
     [rawDetections, cameraNameById],
   )
 
-  const criticalCount = useMemo(() => events.filter((e) => e.severity === "critical").length, [events])
-  const highCount = useMemo(() => events.filter((e) => e.severity === "high").length, [events])
-  const mediumCount = useMemo(() => events.filter((e) => e.severity === "medium").length, [events])
+  const visibleEvents = useMemo(
+    () => events.filter((event) => !dismissedEventIds.has(event.id)),
+    [events, dismissedEventIds],
+  )
+
+  const criticalCount = useMemo(() => visibleEvents.filter((e) => e.severity === "critical").length, [visibleEvents])
+  const highCount = useMemo(() => visibleEvents.filter((e) => e.severity === "high").length, [visibleEvents])
+  const mediumCount = useMemo(() => visibleEvents.filter((e) => e.severity === "medium").length, [visibleEvents])
 
   const loadDetections = useCallback(async () => {
     setError(null)
@@ -369,16 +437,47 @@ export function EventsAlerts() {
     [getSurveillanceAccessTokenOrNull, loading, openPlayback],
   )
 
-  const filteredEvents = events.filter((event) => {
-    const matchesFilter = filter === "all" || event.status === filter
-    const matchesSeverity = severityFilter === "all" || event.severity === severityFilter
-    const matchesSearch =
-      event.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      event.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      event.location.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      event.camera.toLowerCase().includes(searchQuery.toLowerCase())
-    return matchesFilter && matchesSeverity && matchesSearch
-  })
+  const filteredEvents = useMemo(
+    () =>
+      visibleEvents.filter((event) => {
+        const matchesFilter = filter === "all" || event.status === filter
+        const matchesSeverity = severityFilter === "all" || event.severity === severityFilter
+        const matchesSearch =
+          event.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          event.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          event.location.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          event.camera.toLowerCase().includes(searchQuery.toLowerCase())
+        return matchesFilter && matchesSeverity && matchesSearch
+      }),
+    [visibleEvents, filter, severityFilter, searchQuery],
+  )
+
+  const EVENT_LIST_VISIBLE_COUNT = 5
+  const eventItemMeasureRef = useRef<HTMLDivElement>(null)
+  const [eventListMaxHeight, setEventListMaxHeight] = useState<number | undefined>(undefined)
+
+  const syncEventListHeight = useCallback(() => {
+    const sample = eventItemMeasureRef.current
+    if (!sample || filteredEvents.length === 0) {
+      setEventListMaxHeight(undefined)
+      return
+    }
+    const gapPx = 8
+    setEventListMaxHeight(sample.offsetHeight * EVENT_LIST_VISIBLE_COUNT + gapPx * (EVENT_LIST_VISIBLE_COUNT - 1))
+  }, [filteredEvents.length])
+
+  useEffect(() => {
+    if (viewMode !== "timeline") return
+    syncEventListHeight()
+    const sample = eventItemMeasureRef.current
+    const ro = sample ? new ResizeObserver(() => syncEventListHeight()) : null
+    if (sample && ro) ro.observe(sample)
+    window.addEventListener("resize", syncEventListHeight)
+    return () => {
+      ro?.disconnect()
+      window.removeEventListener("resize", syncEventListHeight)
+    }
+  }, [viewMode, syncEventListHeight, filteredEvents])
 
   const getSeverityColor = (severity: string) => {
     switch (severity) {
@@ -388,19 +487,6 @@ export function EventsAlerts() {
         return "bg-orange-100 text-orange-700 border-orange-300 font-semibold"
       case "medium":
         return "bg-amber-100 text-amber-800 border-amber-300 font-semibold"
-      default:
-        return "bg-muted text-muted-foreground border-border"
-    }
-  }
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "new":
-        return "bg-red-100 text-red-700 border-red-300"
-      case "acknowledged":
-        return "bg-amber-100 text-amber-800 border-amber-300"
-      case "resolved":
-        return "bg-green-100 text-green-700 border-green-300"
       default:
         return "bg-muted text-muted-foreground border-border"
     }
@@ -457,10 +543,22 @@ export function EventsAlerts() {
     void playFromDetection(detectionId, ev?.absoluteEventTime ?? null)
   }
 
+  const handleDeleteEvent = (eventId: string) => {
+    setDismissedEventIds((prev) => {
+      const next = new Set(prev)
+      next.add(eventId)
+      persistDismissedEventIds(next)
+      return next
+    })
+    setShowActionMenu((current) => (current === eventId ? null : current))
+  }
+
   const summaryInsight =
     events.length === 0
       ? "No medium, high, or critical detection events in the last 7 days. Events appear after offline AI scans complete on stored recordings."
-      : `Monitoring ${events.length} detection-based event(s) from the last 7 days — ${criticalCount} critical, ${highCount} high, ${mediumCount} medium priority.`
+      : visibleEvents.length === 0
+        ? "All visible events have been dismissed from the dashboard."
+        : `Monitoring ${visibleEvents.length} detection-based event(s) from the last 7 days — ${criticalCount} critical, ${highCount} high, ${mediumCount} medium priority.`
 
   return (
     <div className="space-y-6">
@@ -639,178 +737,218 @@ export function EventsAlerts() {
 
       {/* Timeline View */}
       {viewMode === "timeline" && (
-        <div className="space-y-4">
+        <div className="space-y-2">
           <div className="flex items-center justify-between">
             <h2 className="text-xl font-semibold text-foreground">Event Timeline</h2>
             <Badge variant="secondary">{filteredEvents.length} events</Badge>
           </div>
 
-          {filteredEvents.map((event) => (
-            <Card
-              key={event.id}
-              className={`surface-panel transition-colors hover:shadow-[var(--shadow-elevated)] ${
-                event.severity === "critical" ? "ring-2 ring-red-400/50" : ""
-              }`}
+          {filteredEvents.length > 0 && (
+            <div
+              className="recordings-table-scroll grid grid-cols-1 md:grid-cols-2 gap-2 overflow-y-auto"
+              style={eventListMaxHeight != null ? { maxHeight: eventListMaxHeight } : undefined}
             >
-              <CardContent className="p-4">
-                <div className="flex items-start gap-4">
-                  <div
-                    className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                      event.severity === "critical"
-                        ? "bg-red-100"
-                        : event.severity === "high"
-                          ? "bg-orange-100"
-                          : "bg-amber-100"
+              {filteredEvents.map((event, index) => (
+                <div
+                  key={event.id}
+                  ref={index === 0 ? eventItemMeasureRef : undefined}
+                  className="h-full min-h-0"
+                >
+                  <Card
+                    className={`surface-panel h-full flex flex-col transition-colors hover:shadow-[var(--shadow-elevated)] ${
+                      event.severity === "critical" ? "ring-2 ring-red-400/50" : ""
                     }`}
                   >
-                    {getEventIcon(event.type)}
-                  </div>
-
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between mb-2">
-                      <h3 className="font-semibold text-foreground">{event.title}</h3>
+                    <CardContent className="flex flex-1 flex-col gap-2 p-2">
                       <div className="flex items-center gap-2">
-                        <Badge variant="outline" className={getSeverityColor(event.severity)}>
+                        <div
+                          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
+                            event.severity === "critical"
+                              ? "bg-red-100"
+                              : event.severity === "high"
+                                ? "bg-orange-100"
+                                : "bg-amber-100"
+                          }`}
+                        >
+                          {getEventIcon(event.type)}
+                        </div>
+                        <h3 className="min-w-0 flex-1 font-semibold leading-tight text-foreground">
+                          {event.title}
+                        </h3>
+                        <Badge
+                          variant="outline"
+                          className={`shrink-0 capitalize ${getSeverityColor(event.severity)}`}
+                        >
                           {event.severity}
                         </Badge>
-                        <Badge variant="outline" className={getStatusColor(event.status)}>
-                          {event.status}
-                        </Badge>
-                      </div>
-                    </div>
-
-                    <p className="text-muted-foreground text-sm mb-3">{event.description}</p>
-
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-sm">
-                      <div className="flex items-center gap-2">
-                        <Camera className="w-4 h-4 text-muted-foreground" />
-                        <span className="text-foreground">{event.camera}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <MapPin className="w-4 h-4 text-muted-foreground" />
-                        <span className="text-foreground">{event.location}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Clock className="w-4 h-4 text-muted-foreground" />
-                        <span className="text-foreground">{event.timestamp}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Zap className="w-4 h-4 text-muted-foreground" />
-                        <span className="text-foreground">AI: {Math.round(event.aiConfidence * 100)}%</span>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2 mt-3 flex-wrap">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleViewCamera()
-                        }}
-                      >
-                        <Eye className="w-4 h-4 mr-2" />
-                        View Camera
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={playbackLoadingId === event.detectionId}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handlePlayback(event.detectionId)
-                        }}
-                      >
-                        <Play className="w-4 h-4 mr-2" />
-                        {playbackLoadingId === event.detectionId ? "Loading…" : "Playback"}
-                      </Button>
-                      <div className="relative">
                         <Button
-                          size="sm"
-                          variant="outline"
-                          className="bg-blue-500/20 border-blue-500/30 text-blue-400 hover:bg-blue-500/30"
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          className="h-7 w-7 shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                          aria-label="Delete event"
                           onClick={(e) => {
                             e.stopPropagation()
-                            setShowActionMenu(showActionMenu === event.id ? null : event.id)
+                            handleDeleteEvent(event.id)
                           }}
                         >
-                          <AlertTriangle className="w-4 h-4 mr-2" />
-                          Take Action
+                          <Trash2 className="h-3.5 w-3.5" />
                         </Button>
+                      </div>
 
-                        {showActionMenu === event.id && (
-                          <div className="absolute top-full left-0 mt-1 w-48 rounded-lg border border-border bg-card shadow-[var(--shadow-elevated)] z-50">
-                            <div className="p-1">
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                className="w-full justify-start text-left hover:bg-muted"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  handleTakeAction(event.id, "acknowledge")
-                                }}
-                              >
-                                <CheckCircle className="w-4 h-4 mr-2" />
-                                Acknowledge
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                className="w-full justify-start text-left hover:bg-muted"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  handleTakeAction(event.id, "escalate")
-                                }}
-                              >
-                                <ArrowUp className="w-4 h-4 mr-2" />
-                                Escalate
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                className="w-full justify-start text-left hover:bg-muted"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  handleTakeAction(event.id, "dispatch")
-                                }}
-                              >
-                                <Send className="w-4 h-4 mr-2" />
-                                Dispatch
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                className="w-full justify-start text-left hover:bg-muted"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  handleTakeAction(event.id, "export")
-                                }}
-                              >
-                                <Download className="w-4 h-4 mr-2" />
-                                Export Clip
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                className="w-full justify-start text-left hover:bg-muted"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  handleTakeAction(event.id, "pin")
-                                }}
-                              >
-                                <Pin className="w-4 h-4 mr-2" />
-                                Pin to Dashboard
-                              </Button>
+                      <div className="flex flex-1 gap-2.5">
+                        <div className="flex min-w-0 flex-1 flex-col">
+                          <p className="mb-1 line-clamp-2 text-sm text-muted-foreground">{event.description}</p>
+
+                          <div className="mt-auto space-y-0.5 text-sm">
+                            <div className="flex items-center gap-1 min-w-0">
+                              <MapPin className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                              <span className="truncate text-foreground">{event.camera}</span>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <Clock className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                              <span className="text-foreground">{event.timestamp}</span>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <Zap className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                              <span className="text-foreground">
+                                Ai Confidence: {Math.round(event.aiConfidence * 100)}%
+                              </span>
                             </div>
                           </div>
-                        )}
+
+                          <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-8 px-2.5 text-xs"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  handleViewCamera()
+                                }}
+                              >
+                                <Eye className="mr-1.5 h-3.5 w-3.5" />
+                                View Live
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-8 px-2.5 text-xs"
+                                disabled={playbackLoadingId === event.detectionId}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  handlePlayback(event.detectionId)
+                                }}
+                              >
+                                <Play className="mr-1.5 h-3.5 w-3.5" />
+                                {playbackLoadingId === event.detectionId ? "Loading…" : "Playback"}
+                              </Button>
+                              <div className="relative">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-8 border-blue-500/30 bg-blue-500/20 px-2.5 text-xs text-blue-400 hover:bg-blue-500/30"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setShowActionMenu(showActionMenu === event.id ? null : event.id)
+                                  }}
+                                >
+                                  <AlertTriangle className="mr-1.5 h-3.5 w-3.5" />
+                                  Take Action
+                                </Button>
+
+                                {showActionMenu === event.id && (
+                                  <div className="absolute left-0 top-full z-50 mt-1 w-48 rounded-lg border border-border bg-card shadow-[var(--shadow-elevated)]">
+                                    <div className="p-1">
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        className="w-full justify-start text-left hover:bg-muted"
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          handleTakeAction(event.id, "acknowledge")
+                                        }}
+                                      >
+                                        <CheckCircle className="mr-2 h-4 w-4" />
+                                        Acknowledge
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        className="w-full justify-start text-left hover:bg-muted"
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          handleTakeAction(event.id, "escalate")
+                                        }}
+                                      >
+                                        <ArrowUp className="mr-2 h-4 w-4" />
+                                        Escalate
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        className="w-full justify-start text-left hover:bg-muted"
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          handleTakeAction(event.id, "dispatch")
+                                        }}
+                                      >
+                                        <Send className="mr-2 h-4 w-4" />
+                                        Dispatch
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        className="w-full justify-start text-left hover:bg-muted"
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          handleTakeAction(event.id, "export")
+                                        }}
+                                      >
+                                        <Download className="mr-2 h-4 w-4" />
+                                        Export Clip
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        className="w-full justify-start text-left hover:bg-muted"
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          handleTakeAction(event.id, "pin")
+                                        }}
+                                      >
+                                        <Pin className="mr-2 h-4 w-4" />
+                                        Pin to Dashboard
+                                      </Button>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                        </div>
+
+                        <div className="w-[180px] shrink-0 self-stretch xl:w-[220px]">
+                          <div className="relative h-full min-h-[101px] overflow-hidden rounded-md border border-border bg-muted/30 xl:min-h-[124px]">
+                            {event.previewFrame ? (
+                              <img
+                                src={event.previewFrame}
+                                alt=""
+                                className="absolute inset-0 h-full w-full object-cover"
+                              />
+                            ) : (
+                              <div className="absolute inset-0 flex items-center justify-center">
+                                <span className="text-[10px] text-muted-foreground">No Preview</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  </div>
+                    </CardContent>
+                  </Card>
                 </div>
-              </CardContent>
-            </Card>
-          ))}
+              ))}
+            </div>
+          )}
 
           {filteredEvents.length === 0 && !loading && (
             <Card className="surface-panel">
@@ -820,7 +958,9 @@ export function EventsAlerts() {
                 <p className="text-muted-foreground">
                   {events.length === 0
                     ? "No medium, high, or critical detection events in the last 7 days. Record footage and wait for the offline AI scan to complete."
-                    : "Try adjusting your filters or search criteria."}
+                    : visibleEvents.length === 0
+                      ? "All events have been dismissed from the dashboard."
+                      : "Try adjusting your filters or search criteria."}
                 </p>
               </CardContent>
             </Card>

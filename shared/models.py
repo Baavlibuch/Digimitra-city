@@ -91,6 +91,7 @@ class RecordingDetection(Base):
     confidence = Column(Float, nullable=False)
     timestamp_offset_ms = Column(Integer, nullable=False)
     bounding_box = Column(JSON, nullable=False)
+    preview_object_key = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     segment = relationship("RecordingSegment", back_populates="detections")

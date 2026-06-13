@@ -603,6 +603,12 @@ def _detection_to_schema(row: RecordingDetection) -> schemas.RecordingDetectionO
     seg = row.segment
     if seg is None:
         raise HTTPException(status_code=500, detail="Detection row missing segment join")
+    preview_url: Optional[str] = None
+    if row.preview_object_key:
+        preview_url = recording_storage.get_presigned_url(
+            row.preview_object_key,
+            bucket_name=seg.bucket_name,
+        )
     return schemas.RecordingDetectionOut(
         id=row.id,
         recording_segment_id=row.recording_segment_id,
@@ -613,6 +619,7 @@ def _detection_to_schema(row: RecordingDetection) -> schemas.RecordingDetectionO
         bounding_box=row.bounding_box,
         created_at=row.created_at,
         absolute_event_time=_absolute_event_time(seg.start_time, row.timestamp_offset_ms),
+        preview_url=preview_url,
     )
 
 

@@ -10,6 +10,7 @@ import {
   detectionsAtTime,
   eventBannerLabel,
   formatObjectLabel,
+  isIdleSceneMessage,
   nearestDetection,
   parseBoundingBox,
   type SearchEvidenceContext,
@@ -246,7 +247,7 @@ export function RecordingPlaybackPlayer({
       const active = detectionsAtTime(sortedDetections, ms)
       setVisibleDetections(active)
       const label = eventBannerLabel(active)
-      if (label && active.length > 0) {
+      if (label && !isIdleSceneMessage(label) && active.length > 0) {
         const signature = `${label}:${active.map((d) => d.id).sort().join(",")}`
         if (lastEventSignatureRef.current !== signature) {
           lastEventSignatureRef.current = signature

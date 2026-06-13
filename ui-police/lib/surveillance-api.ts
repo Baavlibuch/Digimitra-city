@@ -120,6 +120,7 @@ export type DetectionDto = {
   bounding_box: Record<string, unknown>
   created_at: string
   absolute_event_time: string
+  preview_url?: string
 }
 
 export type DetectionListDto = {

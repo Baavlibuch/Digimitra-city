@@ -50,6 +50,7 @@ import { useLiveFeedAlerts, type LiveFeedNotification } from "@/lib/live-feed-al
 import { useLiveAlertWebSocket, type LiveWsAlert } from "@/lib/use-live-alert-websocket"
 import { useLiveFramePusher } from "@/lib/use-live-frame-pusher"
 import { isLiveWebSocketEnabled } from "@/lib/live-ws-config"
+import { isIdleSceneMessage } from "@/lib/detection-overlay-utils"
 import { LiveBboxOverlay } from "@/components/live-bbox-overlay"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -225,7 +226,7 @@ type DemoUploadBanner = {
   showHighChip: boolean
 }
 
-function demoUploadVideoBanner(uploadIndex: number): DemoUploadBanner {
+function demoUploadVideoBanner(uploadIndex: number): DemoUploadBanner | null {
   if (uploadIndex === 0) {
     return {
       label: "🚨 Accident Alert",
@@ -240,11 +241,7 @@ function demoUploadVideoBanner(uploadIndex: number): DemoUploadBanner {
       showHighChip: true,
     }
   }
-  return {
-    label: "🟢 Everything Idle",
-    badgeClass: "bg-green-600/95 ring-green-400/50",
-    showHighChip: false,
-  }
+  return null
 }
 
 function LocalVideoTileBody({
@@ -1051,8 +1048,9 @@ export function LiveFeedWall() {
           const wsAlert = liveWs.alertByCameraId.get(feed.id)
           const wsBboxes = liveWs.latestBboxesByCameraId.get(feed.id)
           const sceneStatus = liveWs.sceneStatusByCameraId.get(feed.id)
-          const tileAlertMessage =
+          const rawTileAlert =
             wsAlert?.message ?? sceneStatus?.message ?? feed.aiSuggestion
+          const tileAlertMessage = isIdleSceneMessage(rawTileAlert) ? undefined : rawTileAlert
           const hasLiveHighlight = Boolean(liveWsEnabled && wsAlert)
 
           return (
@@ -1130,19 +1128,11 @@ export function LiveFeedWall() {
                   <div className={`w-3 h-3 rounded-full ${getStatusColor(feed.status)}`} />
                 </div>
 
-                {/* TEMP: Hardcoded idle banner for UI verification before dynamic scene status integration. */}
-                {feed.sourceType !== "local_video" && (
-                  <div className="absolute top-2 left-8 z-20 pointer-events-none">
-                    <span className="inline-flex items-center rounded-md bg-green-600/95 px-2 py-0.5 text-[11px] font-medium text-white shadow-md ring-1 ring-green-400/50 backdrop-blur-sm">
-                      Everything Idle
-                    </span>
-                  </div>
-                )}
-
                 {/* TEMP: Demo-only event banners for uploaded video verification. */}
                 {feed.sourceType === "local_video" && (() => {
                   const uploadIndex = localVideoUploadOrderByFeedId.get(feed.id) ?? 0
                   const banner = demoUploadVideoBanner(uploadIndex)
+                  if (!banner) return null
                   return (
                     <div className="absolute top-2 left-8 z-20 pointer-events-none">
                       <span

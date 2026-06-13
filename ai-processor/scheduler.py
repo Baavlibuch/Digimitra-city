@@ -10,7 +10,7 @@ import os
 import time
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import Dict, Optional
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -21,7 +21,7 @@ from shared.schema_compat import ensure_recording_schema
 from detector import run_detection
 from frame_extractor import iter_spaced_frames
 from shared.minio_config import minio_bucket_name
-from utils import download_object, env_bool, get_minio_client
+from utils import download_object, env_bool, get_minio_client, upload_detection_preview
 
 from shared.recording_clip_milvus import (
     delete_vectors_for_segment,
@@ -149,9 +149,23 @@ def process_next_segment(SessionLocal: sessionmaker) -> bool:
                     clip_collection = None
 
             frames_sampled = 0
+            preview_keys: Dict[int, Optional[str]] = {}
             for frame_idx, (frame, off_ms) in enumerate(iter_spaced_frames(tmp_path, interval)):
                 frames_sampled += 1
-                for d in run_detection(frame, offset_ms=off_ms, conf_threshold=conf):
+                detections = run_detection(frame, offset_ms=off_ms, conf_threshold=conf)
+                preview_key: Optional[str] = None
+                if detections:
+                    if off_ms not in preview_keys:
+                        preview_keys[off_ms] = upload_detection_preview(
+                            client,
+                            seg.bucket_name,
+                            seg.id,
+                            seg.camera_id,
+                            off_ms,
+                            frame,
+                        )
+                    preview_key = preview_keys.get(off_ms)
+                for d in detections:
                     db.add(
                         RecordingDetection(
                             id=str(uuid.uuid4()),
@@ -161,6 +175,7 @@ def process_next_segment(SessionLocal: sessionmaker) -> bool:
                             confidence=d.confidence,
                             timestamp_offset_ms=d.timestamp_offset_ms,
                             bounding_box=d.bounding_box,
+                            preview_object_key=preview_key,
                         )
                     )
                     detection_count += 1

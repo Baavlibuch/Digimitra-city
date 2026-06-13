@@ -77,8 +77,84 @@ function displayRecordingCameraName(
   return resolved
 }
 
-function displayIngestSource(ingestSource: string): string {
-  return ingestSource === "browser_file_upload" ? "Camera" : ingestSource
+function isUploadedSource(
+  cameraId: string,
+  cameraNameById: Map<string, string>,
+  ingestSource?: string,
+): boolean {
+  return (
+    cameraId === "file-upload" ||
+    cameraNameById.get(cameraId) === "Uploaded video" ||
+    ingestSource === "browser_file_upload"
+  )
+}
+
+function isUploadedDetection(cameraId: string, cameraNameById: Map<string, string>): boolean {
+  return isUploadedSource(cameraId, cameraNameById)
+}
+
+function buildUploadedCctvLabels(
+  detections: DetectionDto[],
+  cameraNameById: Map<string, string>,
+  recordings: RecordingSegmentDto[] = [],
+  semanticHits: SemanticSearchHitDto[] = [],
+): Map<string, string> {
+  const segmentFirstTime = new Map<string, string>()
+  const consider = (segmentId: string, time: string) => {
+    const existing = segmentFirstTime.get(segmentId)
+    if (!existing || time < existing) {
+      segmentFirstTime.set(segmentId, time)
+    }
+  }
+  for (const d of detections) {
+    if (!isUploadedDetection(d.camera_id, cameraNameById)) continue
+    consider(d.recording_segment_id, d.absolute_event_time)
+  }
+  for (const r of recordings) {
+    if (!isUploadedSource(r.camera_id, cameraNameById, r.ingest_source)) continue
+    consider(r.id, r.start_time)
+  }
+  let semanticFallbackIdx = 0
+  for (const h of semanticHits) {
+    if (!isUploadedDetection(h.camera_id, cameraNameById)) continue
+    if (!segmentFirstTime.has(h.recording_segment_id)) {
+      consider(
+        h.recording_segment_id,
+        `9999-01-01T${String(semanticFallbackIdx).padStart(12, "0")}Z`,
+      )
+      semanticFallbackIdx++
+    }
+  }
+  const orderedSegmentIds = [...segmentFirstTime.entries()]
+    .sort((a, b) => a[1].localeCompare(b[1]))
+    .map(([segmentId]) => segmentId)
+  const labels = new Map<string, string>()
+  for (let i = 0; i < orderedSegmentIds.length; i++) {
+    labels.set(orderedSegmentIds[i], `CCTV ${i + 1}`)
+  }
+  return labels
+}
+
+function displayDetectionCameraName(
+  detection: DetectionDto,
+  cameraNameById: Map<string, string>,
+  uploadedCctvBySegmentId: Map<string, string>,
+): string {
+  if (isUploadedDetection(detection.camera_id, cameraNameById)) {
+    return uploadedCctvBySegmentId.get(detection.recording_segment_id) ?? "CCTV 1"
+  }
+  return cameraNameById.get(detection.camera_id) ?? detection.camera_id.slice(0, 8)
+}
+
+function displaySemanticSearchCameraName(
+  hit: SemanticSearchHitDto,
+  cameraNameById: Map<string, string>,
+  uploadedCctvBySegmentId: Map<string, string>,
+): string {
+  if (isUploadedDetection(hit.camera_id, cameraNameById)) {
+    return uploadedCctvBySegmentId.get(hit.recording_segment_id) ?? "CCTV 1"
+  }
+  return cameraNameById.get(hit.camera_id) ?? hit.camera_id.slice(0, 8)
 }
 
 /** Local calendar day yyyy-mm-dd */
@@ -156,12 +232,8 @@ export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: Recordi
   const [playbackDetectionsLoading, setPlaybackDetectionsLoading] = useState(false)
   const [playbackEntryContext, setPlaybackEntryContext] = useState<PlaybackEntryContext>({ mode: "normal" })
   const [activeSegmentStart, setActiveSegmentStart] = useState<string | null>(null)
-  const recordingsTableScrollRef = useRef<HTMLDivElement>(null)
   const recordingFiltersCardRef = useRef<HTMLDivElement>(null)
   const [pairedPanelHeight, setPairedPanelHeight] = useState<number | null>(null)
-  const hideRecordingsSourceRef = useRef(false)
-  const [hideRecordingsSource, setHideRecordingsSource] = useState(false)
-  hideRecordingsSourceRef.current = hideRecordingsSource
 
   const syncPairedPanelHeight = useCallback(() => {
     const el = recordingFiltersCardRef.current
@@ -185,36 +257,6 @@ export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: Recordi
       window.removeEventListener("resize", syncPairedPanelHeight)
     }
   }, [error, loading, syncPairedPanelHeight])
-
-  const syncRecordingsTableLayout = useCallback(() => {
-    const el = recordingsTableScrollRef.current
-    if (!el) return
-    const table = el.querySelector("table")
-    if (!table) return
-    const sourceColEstimatePx = 128
-    const effectiveScrollWidth = hideRecordingsSourceRef.current
-      ? table.scrollWidth + sourceColEstimatePx
-      : table.scrollWidth
-    setHideRecordingsSource(effectiveScrollWidth > el.clientWidth + 1)
-  }, [])
-
-  useEffect(() => {
-    const el = recordingsTableScrollRef.current
-    if (!el) return
-    const table = el.querySelector("table")
-    syncRecordingsTableLayout()
-    const ro = new ResizeObserver(() => syncRecordingsTableLayout())
-    ro.observe(el)
-    if (table) ro.observe(table)
-    const vv = window.visualViewport
-    vv?.addEventListener("resize", syncRecordingsTableLayout)
-    window.addEventListener("resize", syncRecordingsTableLayout)
-    return () => {
-      ro.disconnect()
-      vv?.removeEventListener("resize", syncRecordingsTableLayout)
-      window.removeEventListener("resize", syncRecordingsTableLayout)
-    }
-  }, [rows, loading, hideRecordingsSource, syncRecordingsTableLayout])
 
   const filtersRef = useRef({
     cameraFilter,
@@ -323,6 +365,11 @@ export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: Recordi
     for (const c of cameras) m.set(c.id, c.name)
     return m
   }, [cameras])
+
+  const uploadedDetectionCctvBySegmentId = useMemo(
+    () => buildUploadedCctvLabels(detRows, cameraNameById, rows, semanticHits),
+    [detRows, cameraNameById, rows, semanticHits],
+  )
 
   const applyPreset = useCallback((preset: "24h" | "7d" | "today" | "clear") => {
     if (preset === "clear") {
@@ -719,7 +766,11 @@ export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: Recordi
                   <li key={`${h.recording_segment_id}-${h.timestamp_offset_ms}-${h.vector_id ?? ""}`} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
                     <div className="min-w-0">
                       <div className="font-medium text-foreground truncate">
-                        {cameraNameById.get(h.camera_id) ?? h.camera_id.slice(0, 8)}
+                        {displaySemanticSearchCameraName(
+                          h,
+                          cameraNameById,
+                          uploadedDetectionCctvBySegmentId,
+                        )}
                       </div>
                       <div className="text-xs text-muted-foreground truncate" title={h.recording_segment_id}>
                         {(h.timestamp_offset_ms / 1000).toFixed(1)}s · score {(h.similarity * 100).toFixed(0)}%
@@ -910,81 +961,78 @@ export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: Recordi
 
       <Card className="surface-panel overflow-hidden">
         <CardContent className="p-0">
-          <div ref={recordingsTableScrollRef} className="recordings-table-scroll max-h-[15rem] overflow-auto">
+          <div className="recordings-table-scroll max-h-[15rem] overflow-auto">
             <table className="enterprise-table w-full text-sm">
               <thead className="sticky top-0 z-10">
                 <tr>
-                  <th>Camera</th>
+                  <th className="min-w-28">Camera</th>
                   <th>Start</th>
                   <th>End</th>
                   <th>Duration</th>
                   <th>Type</th>
                   <th>Size</th>
-                  {!hideRecordingsSource && <th>Source</th>}
                   <th className="whitespace-nowrap">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.length === 0 && !loading ? (
                   <tr>
-                    <td colSpan={hideRecordingsSource ? 7 : 8} className="p-6 text-center text-muted-foreground">
+                    <td colSpan={7} className="p-6 text-center text-muted-foreground">
                       No recordings in this range. Live webcam segments appear here after upload completes.
                     </td>
                   </tr>
                 ) : (
-                  rows.map((r) => (
-                    <tr key={r.id}>
-                      <td className="p-2 align-top">
-                        <div className="font-medium text-foreground">
-                          {displayRecordingCameraName(r, cameraNameById)}
-                        </div>
-                        <div className="text-xs text-muted-foreground truncate max-w-[200px]" title={r.object_key}>
-                          {r.object_key}
-                        </div>
-                      </td>
-                      <td className="p-2 align-top whitespace-nowrap">{formatDt(r.start_time)}</td>
-                      <td className="p-2 align-top whitespace-nowrap">{formatDt(r.end_time)}</td>
-                      <td className="p-2 align-top">
-                        {r.duration_seconds != null ? `${r.duration_seconds.toFixed(0)}s` : "—"}
-                      </td>
-                      <td className="p-2 align-top">
-                        <Badge variant="outline" className="text-xs font-normal">
-                          {r.file_type.includes("webm") ? "WebM" : r.file_type.includes("mp4") ? "MP4" : r.file_type}
-                        </Badge>
-                      </td>
-                      <td className="p-2 align-top">{formatBytes(r.size_bytes)}</td>
-                      {!hideRecordingsSource && (
-                        <td className="p-2 align-top text-xs text-muted-foreground">
-                          {displayIngestSource(r.ingest_source)}
+                  rows.map((r) => {
+                    const cameraName = displayRecordingCameraName(r, cameraNameById)
+                    return (
+                      <tr key={r.id}>
+                        <td className="p-2 align-top min-w-28">
+                          <div
+                            className="font-medium text-foreground whitespace-nowrap overflow-hidden text-ellipsis"
+                            title={cameraName}
+                          >
+                            {cameraName}
+                          </div>
                         </td>
-                      )}
-                      <td className="p-2 align-top">
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            className="border-primary/30 text-primary hover:bg-primary/5"
-                            onClick={() => void play(r.id)}
-                          >
-                            <Play className="h-3.5 w-3.5 mr-1" />
-                            Play
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            className="border-destructive/35 text-destructive hover:bg-destructive/5"
-                            disabled={deletingId === r.id}
-                            onClick={() => void remove(r.id)}
-                          >
-                            <Trash2 className="h-3.5 w-3.5 mr-1" />
-                            {deletingId === r.id ? "…" : "Delete"}
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))
+                        <td className="p-2 align-top whitespace-nowrap">{formatDt(r.start_time)}</td>
+                        <td className="p-2 align-top whitespace-nowrap">{formatDt(r.end_time)}</td>
+                        <td className="p-2 align-top">
+                          {r.duration_seconds != null ? `${r.duration_seconds.toFixed(0)}s` : "—"}
+                        </td>
+                        <td className="p-2 align-top">
+                          <Badge variant="outline" className="text-xs font-normal">
+                            {r.file_type.includes("webm") ? "WebM" : r.file_type.includes("mp4") ? "MP4" : r.file_type}
+                          </Badge>
+                        </td>
+                        <td className="p-2 align-top">{formatBytes(r.size_bytes)}</td>
+                        <td className="p-2 align-top">
+                          <div className="flex items-center gap-2 whitespace-nowrap">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="border-primary/30 text-primary hover:bg-primary/5"
+                              onClick={() => void play(r.id)}
+                            >
+                              <Play className="h-3.5 w-3.5 mr-1" />
+                              Play
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="border-destructive/35 text-destructive hover:bg-destructive/5"
+                              disabled={deletingId === r.id}
+                              onClick={() => void remove(r.id)}
+                            >
+                              <Trash2 className="h-3.5 w-3.5 mr-1" />
+                              {deletingId === r.id ? "…" : "Delete"}
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })
                 )}
               </tbody>
             </table>
@@ -1025,7 +1073,7 @@ export function RecordingsHistory({ catalogRefreshTrigger, onUploaded }: Recordi
                   detRows.map((d) => (
                     <tr key={d.id}>
                       <td className="p-3 align-top">
-                        {cameraNameById.get(d.camera_id) ?? d.camera_id.slice(0, 8)}
+                        {displayDetectionCameraName(d, cameraNameById, uploadedDetectionCctvBySegmentId)}
                       </td>
                       <td className="p-3 align-top">
                         <Badge variant="outline" className="text-xs font-normal">

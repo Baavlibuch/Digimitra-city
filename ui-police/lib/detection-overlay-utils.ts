@@ -209,6 +209,12 @@ function hasSameFramePersonVehicleCollision(
   return false
 }
 
+export function isIdleSceneMessage(message: string | null | undefined): boolean {
+  if (!message) return false
+  const normalized = message.toLowerCase().replace(/['']/g, "")
+  return normalized.includes("everything") && normalized.includes("idle")
+}
+
 export function eventBannerLabel(detections: DetectionDto[]): string | null {
   if (detections.length === 0) return null
   const persons = detections.filter((d) => d.object_type === "person")
@@ -217,7 +223,6 @@ export function eventBannerLabel(detections: DetectionDto[]): string | null {
 
   if (persons.length >= 10) return "Crowd Formation"
 
-  if (persons.length >= 2 && vehicles.length >= 2) return "Everything's Idle"
   if (vehicles.length >= 100) return "Traffic Congestion"
   const possibleCollision =
     hasSameFrameVehicleCollision(vehicles) ||

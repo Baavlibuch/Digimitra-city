@@ -121,6 +121,9 @@ services:
       <<: *default-env
     ports:
       - "8000:8000"
+    volumes:
+      - ./shared:/app/shared
+      - ./api/src:/app/api/src
 
   ai-processor:
     build:
@@ -146,6 +149,9 @@ services:
       YOLO_IMGSZ: "416"
       PYTHONPATH: /app
       <<: *default-env
+    volumes:
+      - ./shared:/app/shared
+      - ./ai-processor:/app/ai-processor
 
   stream-processor:
     build:
