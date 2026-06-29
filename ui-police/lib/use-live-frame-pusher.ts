@@ -33,7 +33,7 @@ export function useLiveFramePusher(
 
     const pushFrame = async () => {
       const video = videoRef.current
-      if (!video || video.readyState < 2 || !video.videoWidth) return
+      if (!video || video.readyState < 2 || !video.videoWidth || video.paused || video.ended) return
 
       try {
         let tok = tokenRef.current

@@ -59,11 +59,11 @@ def test_crowd_beats_wrong_way():
     assert result.scene_status == "crowd_gathering"
 
 
-def test_congestion_beats_wrong_way():
+def test_wrong_way_beats_congestion():
     congestion = _alert("traffic_congestion", "Congestion.")
     wrong_way = _alert("wrong_way_driving", "Wrong way.")
     result = derive_scene_status([wrong_way, congestion])
-    assert result.scene_status == "traffic_congestion"
+    assert result.scene_status == "wrong_way_driving"
 
 
 def test_to_ws_payload_shape():

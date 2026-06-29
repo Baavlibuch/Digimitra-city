@@ -10,7 +10,7 @@ from config import YOLO_CONFIDENCE, YOLO_DEVICE, YOLO_IMGSZ, YOLO_MODEL
 
 logger = logging.getLogger(__name__)
 
-_ALLOWED_COCO_IDS = {0, 1, 2, 3, 5, 7}
+_ALLOWED_COCO_IDS = {0, 1, 2, 3, 5, 7, 24, 26, 28}
 _LABEL_MAP = {
     "person": "person",
     "bicycle": "bicycle",
@@ -18,6 +18,9 @@ _LABEL_MAP = {
     "motorcycle": "motorcycle",
     "bus": "bus",
     "truck": "truck",
+    "backpack": "backpack",
+    "handbag": "handbag",
+    "suitcase": "suitcase",
 }
 
 _model = None

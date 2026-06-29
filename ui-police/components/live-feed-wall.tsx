@@ -235,49 +235,29 @@ function pickRandomCctvNumber(used: Set<number>): number {
   return Math.floor(Math.random() * LOCAL_VIDEO_CCTV_POOL_MAX) + 1
 }
 
-// Demo-only live feed banner overrides (presentation layer). Set false to disable.
-const DEMO_LIVE_FEED_BANNERS_ENABLED = true
-
-const LIVE_FEED_BANNERS: Record<number, string> = {
-  1: "Accident Alert",
-  2: "Suspicious Activity",
-  3: "Suspicious Activity",
-  7: "Accident Alert",
-  8: "Crowd Formation",
-  9: "Crowd Formation",
-}
-
-function liveFeedNumber(feed: CameraFeed, localUploadIndex?: number): number | undefined {
-  if (feed.sourceType === "local_video" && localUploadIndex != null) {
-    return localUploadIndex + 1
-  }
-  const asNumber = Number(feed.id)
-  return Number.isFinite(asNumber) && asNumber >= 1 ? asNumber : undefined
-}
-
-function demoLiveFeedBannerText(
-  feedNumber: number | undefined,
-  existingBannerText: string | undefined,
-): string | undefined {
-  if (!DEMO_LIVE_FEED_BANNERS_ENABLED || feedNumber == null) {
-    return existingBannerText
-  }
-  return LIVE_FEED_BANNERS[feedNumber] ?? existingBannerText
-}
-
 function LocalVideoTileBody({
   objectUrl,
   feed,
+  operatorUsername,
+  liveFramePushEnabled,
   onFullscreen,
   onDelete,
 }: {
   objectUrl: string
   feed: CameraFeed
+  operatorUsername: string
+  liveFramePushEnabled?: boolean
   onFullscreen: () => void
   onDelete: () => void
 }) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const [playing, setPlaying] = useState(true)
+
+  useLiveFramePusher(videoRef, {
+    cameraId: feed.id,
+    operatorUsername,
+    enabled: Boolean(liveFramePushEnabled && operatorUsername.trim() && playing),
+  })
 
   useEffect(() => {
     const el = videoRef.current
@@ -292,6 +272,14 @@ function LocalVideoTileBody({
       el.load()
     }
   }, [objectUrl, playing])
+
+  useEffect(() => {
+    const el = videoRef.current
+    if (!el) return
+    const onEnded = () => setPlaying(false)
+    el.addEventListener("ended", onEnded)
+    return () => el.removeEventListener("ended", onEnded)
+  }, [objectUrl])
 
   return (
     <>
@@ -584,13 +572,6 @@ export function LiveFeedWall() {
   const localVideoUrlByFeedId = useMemo(() => {
     const map = new Map<string, string>()
     for (const entry of localVideoFeeds) map.set(entry.feed.id, entry.objectUrl)
-    return map
-  }, [localVideoFeeds])
-  const localVideoUploadOrderByFeedId = useMemo(() => {
-    const map = new Map<string, number>()
-    localVideoFeeds.forEach((entry, index) => {
-      map.set(entry.feed.id, index)
-    })
     return map
   }, [localVideoFeeds])
   const allFeeds = useMemo(
@@ -1075,11 +1056,8 @@ export function LiveFeedWall() {
           const wsAlert = liveWs.alertByCameraId.get(feed.id)
           const wsBboxes = liveWs.latestBboxesByCameraId.get(feed.id)
           const sceneStatus = liveWs.sceneStatusByCameraId.get(feed.id)
-          const rawTileAlert =
-            wsAlert?.message ?? sceneStatus?.message ?? feed.aiSuggestion
-          const existingBannerText = isIdleSceneMessage(rawTileAlert) ? undefined : rawTileAlert
-          const feedNumber = liveFeedNumber(feed, localVideoUploadOrderByFeedId.get(feed.id))
-          const tileAlertMessage = demoLiveFeedBannerText(feedNumber, existingBannerText)
+          const rawTileAlert = wsAlert?.message ?? sceneStatus?.message
+          const tileAlertMessage = isIdleSceneMessage(rawTileAlert) ? undefined : rawTileAlert
           const hasLiveHighlight = Boolean(liveWsEnabled && wsAlert)
 
           return (
@@ -1096,6 +1074,8 @@ export function LiveFeedWall() {
                   <LocalVideoTileBody
                     objectUrl={localVideoUrlByFeedId.get(feed.id) ?? ""}
                     feed={feed}
+                    operatorUsername={recordingOperatorId}
+                    liveFramePushEnabled={liveWsEnabled}
                     onFullscreen={() => handleViewCamera(feed.id)}
                     onDelete={() => handleDeleteCamera(feed.id)}
                   />
@@ -1171,7 +1151,7 @@ export function LiveFeedWall() {
                   <LiveBboxOverlay bboxes={wsBboxes} />
                 )}
 
-                {/* AI suggestion overlay — WS live alert, polled detection, or static fallback */}
+                {/* AI alert overlay — live WebSocket alert or scene status only */}
                 {tileAlertMessage && (
                   <div className="absolute bottom-2 left-2 right-2 z-10">
                     <div

@@ -11,7 +11,15 @@ from shared.live_rules import LiveAlert
 SCENE_IDLE = "everything_idle"
 SCENE_IDLE_MESSAGE = "Everything Idle"
 
-ALERT_PRIORITY = ("crowd_gathering", "traffic_congestion", "wrong_way_driving")
+ALERT_PRIORITY = (
+    "accident_detection",
+    "abandoned_object",
+    "crowd_gathering",
+    "wrong_way_driving",
+    "suspicious_activity",
+    "loitering",
+    "traffic_congestion",
+)
 
 
 @dataclass

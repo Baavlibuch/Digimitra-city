@@ -73,6 +73,7 @@ class CameraTracker:
                     speed_px=speed,
                     velocity=velocity,
                     dwell_sec=dwell,
+                    history=list(hist),
                 )
             )
 
@@ -115,6 +116,9 @@ class CameraTracker:
             "motorcycle": 3,
             "bus": 5,
             "truck": 7,
+            "backpack": 24,
+            "handbag": 26,
+            "suitcase": 28,
         }
         return mapping.get(label, 0)
 

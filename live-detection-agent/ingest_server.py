@@ -1,6 +1,9 @@
 """HTTP server for browser JPEG frame ingestion (separate from MediaRecorder)."""
 
-from typing import Optional
+from __future__ import annotations
+
+import logging
+from typing import TYPE_CHECKING, Optional
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -8,7 +11,20 @@ from fastapi.responses import JSONResponse
 from config import LIVE_ALERT_INTERNAL_SECRET
 from frame_source import FRAME_REGISTRY
 
+if TYPE_CHECKING:
+    from pipeline import PipelineManager
+
+logger = logging.getLogger(__name__)
+
 ingest_app = FastAPI(title="Live Frame Ingest")
+
+_pipeline_manager: Optional["PipelineManager"] = None
+
+
+def set_pipeline_manager(manager: "PipelineManager") -> None:
+    """Register the shared pipeline manager (called from app.main)."""
+    global _pipeline_manager
+    _pipeline_manager = manager
 
 
 def _check_secret(secret: Optional[str]) -> None:
@@ -26,6 +42,9 @@ async def ingest_frame(
     body = await request.body()
     if not body:
         raise HTTPException(status_code=400, detail="Empty frame body")
+    if _pipeline_manager is not None:
+        _pipeline_manager.ensure_pipeline(camera_id, browser_only=True)
+
     ok = FRAME_REGISTRY.push_jpeg(camera_id, body)
     if not ok:
         raise HTTPException(status_code=400, detail="Invalid JPEG")

@@ -11,7 +11,7 @@ import uvicorn
 
 from camera_registry import load_cameras
 from config import CAMERA_POLL_SEC, FRAME_INGEST_HOST, FRAME_INGEST_PORT, VIDEO_FALLBACK_DIR
-from ingest_server import ingest_app
+from ingest_server import ingest_app, set_pipeline_manager
 from pipeline import PipelineManager, discover_video_fallback
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -77,6 +77,7 @@ def main() -> None:
         logger.exception("Initial camera sync failed")
 
     _ensure_browser_pipelines(manager)
+    set_pipeline_manager(manager)
 
     poll_thread = threading.Thread(target=_camera_poll_loop, args=(manager,), daemon=True)
     poll_thread.start()
