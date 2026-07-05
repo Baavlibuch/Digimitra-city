@@ -8,7 +8,8 @@ pymilvus>=2.2.0,<2.4
 marshmallow>=3.13.0,<4
 sentence-transformers>=2.2.0,<4
 torch>=2.0.0,<3
-passlib[bcrypt]
+bcrypt==4.0.1
+passlib
 python-jose
 python-multipart
 uvicorn[standard]

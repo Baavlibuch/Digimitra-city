@@ -13,15 +13,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsm6 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY shared /app/shared
 COPY live-detection-agent/requirements.txt /app/live-detection-agent/requirements.txt
+
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir --default-timeout=1000 -r /app/live-detection-agent/requirements.txt \
+    && pip install --no-cache-dir --default-timeout=1000 "ultralytics>=8.0.0,<9" --no-deps
+
+COPY shared /app/shared
 COPY live-detection-agent /app/live-detection-agent
 
 WORKDIR /app/live-detection-agent
 
-RUN pip install --no-cache-dir -r requirements.txt \
-    && pip install --no-cache-dir "ultralytics>=8.0.0,<9" --no-deps \
-    && python -c "import cv2; import supervision; print('deps OK')"
+RUN python -c "import cv2; import supervision; print('deps OK')"
 
 ENV PYTHONPATH=/app:/app/live-detection-agent
 ENV PYTHONUNBUFFERED=1

@@ -3,6 +3,28 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Optional
 
+# Monkeypatch passlib to support bcrypt >= 4.1.0 and 5.0.0+
+try:
+    import bcrypt
+    if not hasattr(bcrypt, "__about__"):
+        class About:
+            __version__ = getattr(bcrypt, "__version__", "4.0.0")
+        bcrypt.__about__ = About()
+except ImportError:
+    pass
+
+try:
+    import passlib.handlers.bcrypt as _pl_bcrypt
+    _pl_original_detect_wrap_bug = _pl_bcrypt.detect_wrap_bug
+    def _patched_detect_wrap_bug(ident):
+        try:
+            return _pl_original_detect_wrap_bug(ident)
+        except ValueError:
+            return False
+    _pl_bcrypt.detect_wrap_bug = _patched_detect_wrap_bug
+except Exception:
+    pass
+
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt

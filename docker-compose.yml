@@ -1,5 +1,3 @@
-version: "3.8"
-
 x-env: &default-env
   TZ: UTC
   MINIO_BUCKET: surveillance-bucket
@@ -44,7 +42,7 @@ services:
           adminApi:
             enabled: true
             urls: ["http://redpanda:9644"]
-    command: ["/bin/sh","-c","echo \"$CONSOLE_CONFIG_FILE\" > /tmp/config.yml; /app/console"]
+    command: ["/bin/sh","-c","echo \"$$CONSOLE_CONFIG_FILE\" > /tmp/config.yml; /app/console"]
 
   minio:
     image: minio/minio:latest

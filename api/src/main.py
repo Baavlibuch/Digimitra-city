@@ -1,3 +1,27 @@
+# Monkeypatch bcrypt for passlib compatibility before any other imports
+try:
+    import bcrypt
+    if not hasattr(bcrypt, "__about__"):
+        class About:
+            __version__ = getattr(bcrypt, "__version__", "4.0.0")
+        bcrypt.__about__ = About()
+    
+    original_hashpw = bcrypt.hashpw
+    def patched_hashpw(password, salt):
+        if password and len(password) > 72:
+            password = password[:72]
+        return original_hashpw(password, salt)
+    bcrypt.hashpw = patched_hashpw
+
+    original_checkpw = bcrypt.checkpw
+    def patched_checkpw(password, hashed_password):
+        if password and len(password) > 72:
+            password = password[:72]
+        return original_checkpw(password, hashed_password)
+    bcrypt.checkpw = patched_checkpw
+except Exception:
+    pass
+
 from datetime import datetime, timedelta
 import logging
 import uuid

@@ -5,7 +5,181 @@ torchvision>=0.9.0,<1
 sqlalchemy>=1.4.0,<3
 psycopg2-binary>=2.9.0,<3
 requests>=2.23.0,<3
-supervision>=0.22.0,<1
+supervision>=0.22.0,<1p/api/requirements.txt
+#20 4359.1    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 13.5/13.5 MB 3.8 MB/s  0:00:03
+#20 4359.2 Downloading joblib-1.5.3-py3-none-any.whl (309 kB)
+#20 4359.3 Downloading scipy-1.13.1-cp39-cp39-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (38.6 MB)
+#20 ...
+
+#26 [ai-processor 5/8] RUN pip install --no-cache-dir --upgrade pip &&     pip install --no-cache-dir --default-timeout=1000 -r /app/ai-processor/requirements.txt     && pip install --no-cache-dir --default-timeout=1000 "ultralytics>=8.0.0,<9" --no-deps
+#26 4370.6    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 12.8/12.8 MB 6.1 MB/s  0:00:02
+#26 4370.6 Downloading protobuf-6.33.6-cp39-abi3-manylinux2014_x86_64.whl (323 kB)
+#26 4370.7 Downloading pyarrow-21.0.0-cp39-cp39-manylinux_2_28_x86_64.whl (42.7 MB)
+#26 ...
+
+#20 [api 4/6] RUN pip install --no-cache-dir --upgrade pip &&     pip install --no-cache-dir --default-timeout=1000 -r /app/api/requirements.txt
+#20 4372.5    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 38.6/38.6 MB 3.2 MB/s  0:00:11
+#20 4372.5 Downloading threadpoolctl-3.6.0-py3-none-any.whl (18 kB)
+#20 ...
+
+#26 [ai-processor 5/8] RUN pip install --no-cache-dir --upgrade pip &&     pip install --no-cache-dir --default-timeout=1000 -r /app/ai-processor/requirements.txt     && pip install --no-cache-dir --default-timeout=1000 "ultralytics>=8.0.0,<9" --no-deps
+#26 4384.8    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 42.7/42.7 MB 3.0 MB/s  0:00:14
+#26 4384.8 Downloading pyparsing-3.3.2-py3-none-any.whl (122 kB)
+#26 4384.9 Downloading python_dateutil-2.9.0.post0-py2.py3-none-any.whl (229 kB)
+#26 4385.0 Downloading pytz-2026.2-py2.py3-none-any.whl (510 kB)
+#26 4385.3 Downloading regex-2026.1.15-cp39-cp39-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (791 kB)
+#26 4385.7    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 791.3/791.3 kB 1.9 MB/s  0:00:00
+#26 4385.8 Downloading safetensors-0.7.0-cp38-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (507 kB)
+#26 4386.1 Downloading six-1.17.0-py2.py3-none-any.whl (11 kB)
+#26 4386.1 Downloading sympy-1.14.0-py3-none-any.whl (6.3 MB)
+#26 4389.0    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 6.3/6.3 MB 2.2 MB/s  0:00:02
+#26 4389.0 Downloading mpmath-1.3.0-py3-none-any.whl (536 kB)
+#26 4389.2    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 536.2/536.2 kB 3.4 MB/s  0:00:00
+#26 4389.3 Downloading tqdm-4.68.3-py3-none-any.whl (78 kB)
+#26 4389.3 Downloading typing_extensions-4.16.0-py3-none-any.whl (45 kB)
+#26 4389.4 Downloading tzdata-2026.2-py2.py3-none-any.whl (349 kB)
+#26 4389.5 Downloading ujson-5.11.0-cp39-cp39-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl (57 kB)
+#26 4389.5 Downloading zipp-3.23.1-py3-none-any.whl (10 kB)
+#26 4389.6 Downloading argon2_cffi-25.1.0-py3-none-any.whl (14 kB)
+#26 4389.6 Downloading argon2_cffi_bindings-25.1.0-cp39-abi3-manylinux_2_26_x86_64.manylinux_2_28_x86_64.whl (87 kB)      
+#26 4389.7 Downloading cffi-2.0.0-cp39-cp39-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (216 kB)
+#26 4390.0 Downloading azure_storage_blob-12.30.0-py3-none-any.whl (435 kB)
+#26 4390.7 Downloading azure_core-1.39.0-py3-none-any.whl (218 kB)
+#26 4390.8 Downloading cryptography-49.0.0-cp39-abi3-manylinux_2_34_x86_64.whl (4.7 MB)
+#26 4395.1    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 4.7/4.7 MB 1.9 MB/s  0:00:02
+#26 4395.1 Downloading isodate-0.7.2-py3-none-any.whl (22 kB)
+#26 4395.2 Downloading filelock-3.19.1-py3-none-any.whl (15 kB)
+#26 4395.2 Downloading importlib_metadata-8.7.1-py3-none-any.whl (27 kB)
+#26 4395.3 Downloading jinja2-3.1.6-py3-none-any.whl (134 kB)
+#26 4395.5 Downloading markupsafe-3.0.3-cp39-cp39-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (20 kB)
+#26 4395.6 Downloading networkx-3.2.1-py3-none-any.whl (1.6 MB)
+#26 4396.2    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.6/1.6 MB 2.6 MB/s  0:00:00
+#26 4396.3 Downloading pycparser-2.23-py3-none-any.whl (118 kB)
+#26 4396.3 Downloading pycryptodome-3.23.0-cp37-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (2.3 MB)
+#26 ...
+
+#20 [api 4/6] RUN pip install --no-cache-dir --upgrade pip &&     pip install --no-cache-dir --default-timeout=1000 -r /app/api/requirements.txt
+#20 4386.5 Installing collected packages: pytz, passlib, nvidia-cusparselt-cu12, mpmath, zipp, websockets, uvloop, urllib3, ujson, tzdata, typing-extensions, tqdm, threadpoolctl, sympy, six, safetensors, regex, pyyaml, python-multipart, python-dotenv, pycryptodome, pycparser, pyasn1, pyarrow, psycopg2-binary, protobuf, Pillow, packaging, nvidia-nvtx-cu12, nvidia-nvjitlink-cu12, nvidia-nccl-cu12, nvidia-curand-cu12, nvidia-cufile-cu12, nvidia-cuda-runtime-cu12, nvidia-cuda-nvrtc-cu12, nvidia-cuda-cupti-cu12, nvidia-cublas-cu12, numpy, networkx, MarkupSafe, joblib, isodate, idna, httptools, hf-xet, h11, grpcio, greenlet, fsspec, filelock, click, charset_normalizer, certifi, bcrypt, annotated-types, annotated-doc, wsproto, uvicorn, typing-inspection, sqlalchemy, scipy, rsa, requests, python-dateutil, pydantic-core, nvidia-cusparse-cu12, nvidia-cufft-cu12, nvidia-cudnn-cu12, marshmallow, jinja2, importlib-metadata, httpcore, exceptiongroup, ecdsa, cffi, triton, scikit-learn, python-jose, pydantic, pandas, nvidia-cusolver-cu12, huggingface-hub, environs, cryptography, azure-core, argon2-cffi-bindings, anyio, watchfiles, torch, tokenizers, starlette, httpx, azure-storage-blob, argon2-cffi, transformers, minio, fastapi, sentence-transformers, pymilvus
+#20 ...
+
+#26 [ai-processor 5/8] RUN pip install --no-cache-dir --upgrade pip &&     pip install --no-cache-dir --default-timeout=1000 -r /app/ai-processor/requirements.txt     && pip install --no-cache-dir --default-timeout=1000 "ultralytics>=8.0.0,<9" --no-deps
+#26 4397.3    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2.3/2.3 MB 2.2 MB/s  0:00:00
+#26 4397.4 Downloading python_dotenv-1.2.1-py3-none-any.whl (21 kB)
+#26 4397.4 Downloading scikit_learn-1.6.1-cp39-cp39-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (13.5 MB)
+#26 4401.6    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 13.5/13.5 MB 3.2 MB/s  0:00:04
+#26 4401.7 Downloading joblib-1.5.3-py3-none-any.whl (309 kB)
+#26 4401.8 Downloading threadpoolctl-3.6.0-py3-none-any.whl (18 kB)
+#26 4413.6 Installing collected packages: pytz, nvidia-cusparselt-cu12, mpmath, zipp, urllib3, ujson, tzdata, typing-extensions, tqdm, threadpoolctl, sympy, six, safetensors, regex, pyyaml, python-dotenv, pyparsing, pycryptodome, pycparser, pyarrow, psycopg2-binary, psutil, protobuf, polars-runtime-32, pillow, packaging, nvidia-nvtx-cu12, nvidia-nvjitlink-cu12, nvidia-nccl-cu12, nvidia-curand-cu12, nvidia-cufile-cu12, nvidia-cuda-runtime-cu12, nvidia-cuda-nvrtc-cu12, nvidia-cuda-cupti-cu12, nvidia-cublas-cu12, numpy, networkx, MarkupSafe, kiwisolver, joblib, isodate, idna, hf-xet, grpcio, greenlet, fsspec, fonttools, filelock, cycler, charset_normalizer, certifi, sqlalchemy, scipy, requests, python-dateutil, polars, opencv-python-headless, nvidia-cusparse-cu12, nvidia-cufft-cu12, nvidia-cudnn-cu12, marshmallow, jinja2, importlib-resources, importlib-metadata, contourpy, cffi, triton, scikit-learn, pandas, nvidia-cusolver-cu12, matplotlib, huggingface-hub, environs, cryptography, azure-core, argon2-cffi-bindings, torch, tokenizers, azure-storage-blob, argon2-cffi, ultralytics-thop, transformers, torchvision, minio, sentence-transformers, pymilvus
+#26 ...
+
+#20 [api 4/6] RUN pip install --no-cache-dir --upgrade pip &&     pip install --no-cache-dir --default-timeout=1000 -r /app/api/requirements.txt
+#20 4628.1
+#20 4628.2 Successfully installed MarkupSafe-3.0.3 Pillow-11.3.0 annotated-doc-0.0.4 annotated-types-0.7.0 anyio-4.12.1 argon2-cffi-25.1.0 argon2-cffi-bindings-25.1.0 azure-core-1.39.0 azure-storage-blob-12.30.0 bcrypt-5.0.0 certifi-2026.6.17 cffi-2.0.0 charset_normalizer-3.4.7 click-8.1.8 cryptography-49.0.0 ecdsa-0.19.2 environs-9.5.0 exceptiongroup-1.3.1 fastapi-0.128.8 filelock-3.19.1 fsspec-2025.10.0 greenlet-3.2.5 grpcio-1.60.0 h11-0.16.0 hf-xet-1.5.1 httpcore-1.0.9 httptools-0.8.0 httpx-0.28.1 huggingface-hub-0.36.2 idna-3.18 importlib-metadata-8.7.1 isodate-0.7.2 jinja2-3.1.6 joblib-1.5.3 marshmallow-3.26.2 minio-7.2.20 mpmath-1.3.0 networkx-3.2.1 numpy-2.0.2 nvidia-cublas-cu12-12.8.4.1 nvidia-cuda-cupti-cu12-12.8.90 nvidia-cuda-nvrtc-cu12-12.8.93 nvidia-cuda-runtime-cu12-12.8.90 nvidia-cudnn-cu12-9.10.2.21 nvidia-cufft-cu12-11.3.3.83 nvidia-cufile-cu12-1.13.1.3 nvidia-curand-cu12-10.3.9.90 nvidia-cusolver-cu12-11.7.3.90 nvidia-cusparse-cu12-12.5.8.93 nvidia-cusparselt-cu12-0.7.1 nvidia-nccl-cu12-2.27.3 nvidia-nvjitlink-cu12-12.8.93 nvidia-nvtx-cu12-12.8.90 packaging-26.2 pandas-2.3.3 passlib-1.7.4 protobuf-6.33.6 psycopg2-binary-2.9.12 pyarrow-21.0.0 pyasn1-0.6.3 pycparser-2.23 pycryptodome-3.23.0 pydantic-2.13.4 pydantic-core-2.46.4 pymilvus-2.3.8 python-dateutil-2.9.0.post0 python-dotenv-1.2.1 python-jose-3.5.0 python-multipart-0.0.20 pytz-2026.2 pyyaml-6.0.3 regex-2026.1.15 requests-2.32.5 rsa-4.9.1 safetensors-0.7.0 scikit-learn-1.6.1 scipy-1.13.1 sentence-transformers-3.4.1 six-1.17.0 sqlalchemy-2.0.51 starlette-0.49.3 sympy-1.14.0 threadpoolctl-3.6.0 tokenizers-0.22.2 torch-2.8.0 tqdm-4.68.3 transformers-4.57.6 triton-3.4.0 typing-extensions-4.16.0 typing-inspection-0.4.2 tzdata-2026.2 ujson-5.11.0 urllib3-2.6.3 uvicorn-0.39.0 uvloop-0.22.1 watchfiles-1.1.1 websockets-15.0.1 wsproto-1.2.0 zipp-3.23.1
+#20 4628.2 WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your system unusable. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.
+#20 DONE 4634.1s
+
+#38 [live-detection-agent] exporting to image
+#38 ...
+
+#43 [api 5/6] COPY ./shared /app/shared
+#43 DONE 0.8s
+
+#38 [live-detection-agent] exporting to image
+#38 ...
+
+#44 [api 6/6] COPY ./api/src /app/api/src
+#44 DONE 0.1s
+
+#45 [api] exporting to image
+#45 exporting layers
+#45 ...
+
+#38 [live-detection-agent] exporting to image
+#38 exporting layers 640.4s done
+#38 exporting manifest sha256:9340e5e1de9137201c6d65e7018770409697e3d41efd85ac6de8934a40c7fce4 0.0s done
+#38 exporting config sha256:3babfd5fe54ddb70ff159bce3afd6c5df0338e0714425d24e3e3c6762c61c627 0.0s done
+#38 exporting attestation manifest sha256:f91ce8fd4457df2434b13cd62f3e0f3829e8c3c8fd369422f467dab46e04c7c6 0.1s done      
+#38 exporting manifest list sha256:14f4199b941b8f6ca40cc353ea1e7baeb1d09741766d0972ebdc9c77baaffdbc 0.0s done
+#38 naming to docker.io/library/digimitra-city-live-detection-agent:latest 0.1s done
+#38 unpacking to docker.io/library/digimitra-city-live-detection-agent:latest
+#38 ...
+
+#26 [ai-processor 5/8] RUN pip install --no-cache-dir --upgrade pip &&     pip install --no-cache-dir --default-timeout=1000 -r /app/ai-processor/requirements.txt     && pip install --no-cache-dir --default-timeout=1000 "ultralytics>=8.0.0,<9" --no-deps
+#26 4665.6
+#26 4665.7 Successfully installed MarkupSafe-3.0.3 argon2-cffi-25.1.0 argon2-cffi-bindings-25.1.0 azure-core-1.39.0 azure-storage-blob-12.30.0 certifi-2026.6.17 cffi-2.0.0 charset_normalizer-3.4.7 contourpy-1.3.0 cryptography-49.0.0 cycler-0.12.1 environs-9.5.0 filelock-3.19.1 fonttools-4.60.2 fsspec-2025.10.0 greenlet-3.2.5 grpcio-1.60.0 hf-xet-1.5.1 huggingface-hub-0.36.2 idna-3.18 importlib-metadata-8.7.1 importlib-resources-6.5.2 isodate-0.7.2 jinja2-3.1.6 joblib-1.5.3 kiwisolver-1.4.7 marshmallow-3.26.2 matplotlib-3.9.4 minio-7.2.20 mpmath-1.3.0 networkx-3.2.1 numpy-2.0.2 nvidia-cublas-cu12-12.8.4.1 nvidia-cuda-cupti-cu12-12.8.90 nvidia-cuda-nvrtc-cu12-12.8.93 nvidia-cuda-runtime-cu12-12.8.90 nvidia-cudnn-cu12-9.10.2.21 nvidia-cufft-cu12-11.3.3.83 nvidia-cufile-cu12-1.13.1.3 nvidia-curand-cu12-10.3.9.90 nvidia-cusolver-cu12-11.7.3.90 nvidia-cusparse-cu12-12.5.8.93 nvidia-cusparselt-cu12-0.7.1 nvidia-nccl-cu12-2.27.3 nvidia-nvjitlink-cu12-12.8.93 nvidia-nvtx-cu12-12.8.90 opencv-python-headless-4.13.0.92 packaging-26.2 pandas-2.3.3 pillow-11.3.0 polars-1.36.1 polars-runtime-32-1.36.1 protobuf-6.33.6 psutil-7.2.2 psycopg2-binary-2.9.12 pyarrow-21.0.0 pycparser-2.23 pycryptodome-3.23.0 pymilvus-2.3.8 pyparsing-3.3.2 python-dateutil-2.9.0.post0 python-dotenv-1.2.1 pytz-2026.2 pyyaml-6.0.3 regex-2026.1.15 requests-2.32.5 safetensors-0.7.0 scikit-learn-1.6.1 scipy-1.13.1 sentence-transformers-3.4.1 six-1.17.0 sqlalchemy-2.0.51 sympy-1.14.0 threadpoolctl-3.6.0 tokenizers-0.22.2 torch-2.8.0 torchvision-0.23.0 tqdm-4.68.3 transformers-4.57.6 triton-3.4.0 typing-extensions-4.16.0 tzdata-2026.2 ujson-5.11.0 ultralytics-thop-2.0.20 urllib3-2.6.3 zipp-3.23.1
+#26 4665.7 WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your system unusable. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.
+#26 4676.0 Collecting ultralytics<9,>=8.0.0
+#26 4677.2   Downloading ultralytics-8.4.87-py3-none-any.whl.metadata (41 kB)
+#26 4677.5 Downloading ultralytics-8.4.87-py3-none-any.whl (1.3 MB)
+#26 4681.4    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.3/1.3 MB 298.8 kB/s  0:00:03
+#26 4681.4 Installing collected packages: ultralytics
+#26 4683.7 Successfully installed ultralytics-8.4.87
+#26 4683.7 WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your system unusable. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.
+#26 DONE 4685.9s
+
+#42 [edge-agent] exporting to image
+#42 ...
+
+#46 [ai-processor 6/8] COPY shared /app/shared
+#46 DONE 1.4s
+
+#42 [edge-agent] exporting to image
+#42 ...
+
+#47 [ai-processor 7/8] COPY ai-processor /app/ai-processor
+#47 DONE 0.2s
+
+#42 [edge-agent] exporting to image
+#42 ...
+
+#48 [ai-processor 8/8] RUN if pip freeze | grep -qE '^opencv-python=='; then echo "ERROR: GUI opencv-python must not be installed"; exit 1; fi     && python -c "import cv2; print('cv2 OK', cv2.__version__)"
+#48 3.265 cv2 OK 4.13.0
+#48 DONE 4.0s
+
+#38 [live-detection-agent] exporting to image
+#38 ...
+
+#49 [ai-processor] exporting to image
+#49 exporting layers
+#49 ...
+
+#38 [live-detection-agent] exporting to image
+#38 unpacking to docker.io/library/digimitra-city-live-detection-agent:latest 139.7s done
+#38 DONE 780.4s
+
+#45 [api] exporting to image
+#45 ...
+
+#50 [live-detection-agent] resolving provenance for metadata file
+#50 DONE 0.1s
+
+#42 [edge-agent] exporting to image
+#42 exporting layers 704.2s done
+#42 exporting manifest sha256:10a0843f02bd4693e4473e17b8b151f8644c6128f805ccdf12ca6d570d680f6a 0.0s done
+#42 exporting config sha256:f61051033731420b2cb0037daa1f05fc048c696e8c990064fc138a0ecba37f4f 0.0s done
+#42 exporting attestation manifest sha256:c71f5ebe59eda4cdec5a822e1b0499d68af176f82ccee06daa652c8b47c1a134 0.0s done      
+#42 exporting manifest list sha256:54e81f8ec816cebb942cf166351a811d466686070d90594f319d739a6279db64
+#42 exporting manifest list sha256:54e81f8ec816cebb942cf166351a811d466686070d90594f319d739a6279db64 0.0s done
+#42 naming to docker.io/library/digimitra-city-edge-agent:latest done
+#42 unpacking to docker.io/library/digimitra-city-edge-agent:latest
+#42 unpacking to docker.io/library/digimitra-city-edge-agent:latest 190.3s done
+#42 DONE 894.7s
+
+#45 [api] exporting to image
+#45 ...
+
+#51 [edge-agent] resolving provenance for metadata file
+#51 DONE 0.0s
+
+#45 [api] exporting to image
+#45 exporting layers 669.9s done
+#45 exporting manifest sha256:065fd2f34122d052d6265734a78573783d554a4d0e81e65f45e5140b6e3891f7 0.0s done
+#45 exporting config sha256:5691e930e2352cee43513bc78dea2c71a25417c208e4b3e8f60d25832e0cd06e 0.1s done
+#45 exporting attestation manifest sha256:7c568435287742b0ec617ce965f72c403e7b8e6055a3ab8f1dd1c68a00dfbe24 0.1s done
+#45 exporting manifest list sha256:6f321839ed83c7209568f5209b51636509ed96c8e92e4ae2a5dd599581a8774d
+#45 exporting manifest list sha256:6f321839ed83c7209568f5209b51636509ed96c8e92e4ae2a5dd599581a8774d 0.0s done
+#45 naming to docker.io/library/digimitra-city-api:latest done
+#45 unpacking to docker.io/library/digimitra-city-api:latest
 fastapi>=0.100.0
 uvicorn[standard]>=0.23.0
 python-multipart>=0.0.6

@@ -2,11 +2,13 @@ FROM python:3.9-slim
 
 WORKDIR /app
 
-COPY ./shared /app/shared
-COPY ./stream-processor/src /app/stream-processor/src
 COPY ./stream-processor/requirements.txt /app/stream-processor/requirements.txt
 
-RUN pip install --no-cache-dir -r /app/stream-processor/requirements.txt
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir --default-timeout=1000 -r /app/stream-processor/requirements.txt
+
+COPY ./shared /app/shared
+COPY ./stream-processor/src /app/stream-processor/src
 
 WORKDIR /app/stream-processor
 
