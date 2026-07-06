@@ -15,6 +15,34 @@ import { RecordingsHistory } from "@/components/recordings-history"
 import { LoadingScreen } from "@/components/loading-screen"
 import { Settings } from "@/components/settings"
 import { Camera, AlertTriangle, Activity, MapPin, Search, Calendar, Clapperboard, Monitor } from "lucide-react"
+import { useAuth } from "@/components/auth-provider"
+import {
+  fetchCameras,
+  fetchDetections,
+  fetchSurveillanceAccessToken,
+} from "@/lib/surveillance-api"
+import { buildIncidentCandidatesFromDetections } from "@/lib/event-deduplication"
+import {
+  readPersistedCameraState,
+  DEFAULT_CAMERA_FEEDS,
+  isFeedActive,
+  CAMERA_FEEDS_SYNC_EVENT,
+} from "@/lib/camera-feeds"
+
+const DISMISSED_EVENTS_STORAGE_KEY = "digimitra.eventsAlerts.dismissedEventIds.v1"
+function loadDismissedEventIds(): Set<string> {
+  if (typeof window === "undefined") return new Set()
+  try {
+    const raw = window.localStorage.getItem(DISMISSED_EVENTS_STORAGE_KEY)
+    if (!raw) return new Set()
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return new Set()
+    return new Set(parsed.filter((id): id is string => typeof id === "string"))
+  } catch {
+    return new Set()
+  }
+}
+
 const NAV_SECTION_IDS = new Set([
   "dashboard",
   "map",
@@ -37,6 +65,13 @@ export function Dashboard({ onSignOut }: DashboardProps) {
   const [isSigningOut, setIsSigningOut] = useState(false)
   const [signOutError, setSignOutError] = useState<string | null>(null)
 
+  const { user } = useAuth()
+  const [activeCameras, setActiveCameras] = useState(0)
+  const [liveAlerts, setLiveAlerts] = useState(0)
+  const [coverageAreas, setCoverageAreas] = useState("0 zones")
+  const [systemStatus, setSystemStatus] = useState<"Operational" | "Degraded" | "Offline">("Operational")
+  const [systemStatusColor, setSystemStatusColor] = useState<"online" | "warning" | "error">("online")
+
   useEffect(() => {
     const section = searchParams.get("section")
     if (section === "recordings") {
@@ -56,11 +91,120 @@ export function Dashboard({ onSignOut }: DashboardProps) {
     return () => clearTimeout(timer)
   }, [])
 
+  useEffect(() => {
+    let active = true
+
+    const updateStats = async () => {
+      try {
+        const username = (user?.email || user?.username || "operator").trim()
+        let tok: string | null = null
+        try {
+          tok = await fetchSurveillanceAccessToken(username)
+        } catch (e) {
+          console.error("Failed to fetch token", e)
+        }
+
+        // Fetch backend cameras
+        const backendCams = await fetchCameras().catch(() => [])
+        const activeBackendCount = backendCams.filter(c => c.stream_status === "online").length
+
+        // Fetch local/custom cameras
+        const { customFeeds, feedDeviceMap, deletedFeedIds } = readPersistedCameraState()
+        const allFeeds = [...DEFAULT_CAMERA_FEEDS, ...customFeeds]
+        const visibleFeeds = allFeeds.filter(feed => !deletedFeedIds.includes(feed.id))
+        const activeFrontendCount = visibleFeeds.filter(feed => isFeedActive(feed, feedDeviceMap)).length
+
+        if (!active) return
+
+        const totalActive = activeBackendCount + activeFrontendCount
+        setActiveCameras(totalActive)
+
+        // Compute coverage zones
+        const zones = new Set<string>()
+        for (const cam of backendCams) {
+          if (cam.stream_status === "online") {
+            if (cam.location) zones.add(cam.location)
+            if (cam.room_name) zones.add(cam.room_name)
+          }
+        }
+        for (const feed of visibleFeeds) {
+          if (isFeedActive(feed, feedDeviceMap)) {
+            if (feed.coverageArea?.label) {
+              zones.add(feed.coverageArea.label)
+            } else if (feed.location) {
+              zones.add(feed.location)
+            }
+          }
+        }
+        setCoverageAreas(`${zones.size} zone${zones.size !== 1 ? "s" : ""}`)
+
+        // Fetch detections for live alerts
+        if (tok) {
+          const end = new Date()
+          const start = new Date(end.getTime() - 7 * 24 * 60 * 60 * 1000) // 7 days lookback
+          const page = await fetchDetections({
+            token: tok,
+            eventAfter: start.toISOString(),
+            eventBefore: end.toISOString(),
+            limit: 200,
+            offset: 0,
+          }).catch(() => ({ items: [] }))
+
+          const incidents = buildIncidentCandidatesFromDetections(page.items || [], {
+            severityFromLabel: (label) => {
+              switch (label) {
+                case "Accident Alert": return "critical"
+                case "Possible Altercation":
+                case "Suspicious Activity":
+                case "Security Alert": return "high"
+                case "Crowd Formation":
+                case "Traffic Congestion":
+                case "High Human Activity":
+                case "Vehicle Cluster Detected": return "medium"
+                default: return "low"
+              }
+            },
+            isUploadedSource: (cameraId) => cameraId === "file-upload",
+          })
+
+          const dismissed = loadDismissedEventIds()
+          const activeAlerts = incidents.filter((inc) => !dismissed.has(inc.id))
+          setLiveAlerts(activeAlerts.length)
+        } else {
+          setLiveAlerts(0)
+        }
+
+        setSystemStatus("Operational")
+        setSystemStatusColor("online")
+      } catch (err) {
+        console.error("Error updating dashboard stats:", err)
+        if (active) {
+          setSystemStatus("Degraded")
+          setSystemStatusColor("warning")
+        }
+      }
+    }
+
+    void updateStats()
+
+    const handleSync = () => {
+      void updateStats()
+    }
+    window.addEventListener(CAMERA_FEEDS_SYNC_EVENT, handleSync)
+    window.addEventListener("storage", handleSync)
+
+    return () => {
+      active = false
+      window.removeEventListener(CAMERA_FEEDS_SYNC_EVENT, handleSync)
+      window.removeEventListener("storage", handleSync)
+    }
+  }, [user])
+
   const stats = [
-    { label: "Active Cameras", value: "10", icon: Camera, status: "online" },
-    { label: "Live Alerts", value: "14", icon: AlertTriangle, status: "warning" },
-    { label: "System Status", value: "Operational", icon: Activity, status: "online" },
-    { label: "Coverage Areas", value: "10 zones", icon: MapPin, status: "online" },
+    { label: "Active Cameras", value: String(activeCameras), icon: Camera, status: activeCameras > 0 ? "online" : "offline" },
+    { label: "Live Alerts", value: String(liveAlerts), icon: AlertTriangle, status: liveAlerts > 0 ? "warning" : "online" },
+    { label: "System Status", value: systemStatus, icon: Activity, status: systemStatusColor },
+    { label: "Coverage Areas", value: coverageAreas, icon: MapPin, status: activeCameras > 0 ? "online" : "offline" },
   ]
 
   const handleSignOut = async () => {
@@ -154,13 +298,12 @@ export function Dashboard({ onSignOut }: DashboardProps) {
                   <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                     <CardTitle className="text-sm font-medium text-muted-foreground">{stat.label}</CardTitle>
                     <stat.icon
-                      className={`h-4 w-4 ${
-                        stat.status === "online"
+                      className={`h-4 w-4 ${stat.status === "online"
                           ? "text-green-500"
                           : stat.status === "warning"
                             ? "text-yellow-500"
                             : "text-red-500"
-                      }`}
+                        }`}
                     />
                   </CardHeader>
                   <CardContent>
