@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import dynamic from "next/dynamic"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -8,7 +9,7 @@ import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Camera, MapPin, Play, Pause, RotateCcw, ZoomIn, ZoomOut, Search, X } from "lucide-react"
 
-interface CameraPin {
+export interface CameraPin {
   id: string
   name: string
   lat: number
@@ -18,6 +19,21 @@ interface CameraPin {
   lastActivity: string
   thumbnail?: string
 }
+
+const LeafletMap = dynamic(
+  () => import("./leaflet-map").then((mod) => mod.LeafletMap),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex items-center justify-center w-full h-96 bg-slate-950 rounded-lg border border-border">
+        <div className="text-center">
+          <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-muted-foreground text-sm">Loading map canvas...</p>
+        </div>
+      </div>
+    ),
+  }
+)
 
 export function MapView() {
   const [selectedCamera, setSelectedCamera] = useState<CameraPin | null>(null)
@@ -147,46 +163,12 @@ export function MapView() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              {/* Mock Map Container */}
-              <div className="relative w-full h-96 bg-muted/40 rounded-lg border border-border overflow-hidden">
-                {/* Map Background */}
-                <div className="absolute inset-0 bg-gradient-to-br from-slate-800 to-slate-900">
-                  <div className="absolute inset-0 opacity-20">
-                    <svg width="100%" height="100%" className="text-blue-500/10">
-                      <defs>
-                        <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
-                          <path d="M 40 0 L 0 0 0 40" fill="none" stroke="currentColor" strokeWidth="1" />
-                        </pattern>
-                      </defs>
-                      <rect width="100%" height="100%" fill="url(#grid)" />
-                    </svg>
-                  </div>
-                </div>
-
-                {/* Camera Pins */}
-                {filteredCameras.map((camera, index) => (
-                  <div
-                    key={camera.id}
-                    className={`absolute w-6 h-6 rounded-full border-2 border-white cursor-pointer transform -translate-x-1/2 -translate-y-1/2 hover:scale-110 transition-transform ${getStatusColor(camera.status)}`}
-                    style={{
-                      left: `${20 + (index % 3) * 30}%`,
-                      top: `${20 + Math.floor(index / 3) * 25}%`,
-                    }}
-                    onClick={() => setSelectedCamera(camera)}
-                  >
-                    <Camera className="w-3 h-3 text-white absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2" />
-                  </div>
-                ))}
-
-                {/* Map Controls */}
-                <div className="absolute top-4 right-4 flex flex-col gap-2">
-                  <Button size="icon" variant="secondary" className="w-8 h-8">
-                    <ZoomIn className="w-4 h-4" />
-                  </Button>
-                  <Button size="icon" variant="secondary" className="w-8 h-8">
-                    <ZoomOut className="w-4 h-4" />
-                  </Button>
-                </div>
+              <div className="w-full h-96">
+                <LeafletMap
+                  cameras={filteredCameras}
+                  selectedCamera={selectedCamera}
+                  onSelectCamera={setSelectedCamera}
+                />
               </div>
             </CardContent>
           </Card>
