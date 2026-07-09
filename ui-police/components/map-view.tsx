@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import dynamic from "next/dynamic"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -16,6 +16,7 @@ export interface CameraPin {
   lng: number
   status: "online" | "offline" | "alert"
   location: string
+  locationName: string
   lastActivity: string
   thumbnail?: string
 }
@@ -41,6 +42,44 @@ export function MapView() {
   const [searchQuery, setSearchQuery] = useState("")
   const [isPlaying, setIsPlaying] = useState(false)
 
+  // Address Geocoding Search States
+  const [addressQuery, setAddressQuery] = useState("")
+  const [searchedLocation, setSearchedLocation] = useState<{ lat: number; lng: number; label: string } | null>(null)
+  const [isSearchingAddress, setIsSearchingAddress] = useState(false)
+
+  const handleAddressSearch = async () => {
+    const query = addressQuery.trim()
+    if (!query) return
+
+    setIsSearchingAddress(true)
+    try {
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`,
+        {
+          headers: {
+            "User-Agent": "DigimitraCitySurveillance/1.0"
+          }
+        }
+      )
+      const data = await response.json()
+      if (Array.isArray(data) && data.length > 0) {
+        const item = data[0]
+        setSearchedLocation({
+          lat: parseFloat(item.lat),
+          lng: parseFloat(item.lon),
+          label: item.display_name
+        })
+      } else {
+        alert("Location not found. Please try a different search.")
+      }
+    } catch (error) {
+      console.error("Error geocoding address:", error)
+      alert("Error finding address. Please try again.")
+    } finally {
+      setIsSearchingAddress(false)
+    }
+  }
+
   // Mock camera data
   const cameras: CameraPin[] = [
     {
@@ -50,6 +89,7 @@ export function MapView() {
       lng: -74.006,
       status: "online",
       location: "Main Entrance",
+      locationName: "Main Entrance",
       lastActivity: "2 min ago",
     },
     {
@@ -59,6 +99,7 @@ export function MapView() {
       lng: -73.9851,
       status: "alert",
       location: "Parking Lot A",
+      locationName: "Parking Lot A",
       lastActivity: "1 min ago",
     },
     {
@@ -68,6 +109,7 @@ export function MapView() {
       lng: -73.9934,
       status: "online",
       location: "Emergency Exit",
+      locationName: "Emergency Exit",
       lastActivity: "5 min ago",
     },
     {
@@ -77,6 +119,7 @@ export function MapView() {
       lng: -73.7949,
       status: "offline",
       location: "Loading Dock",
+      locationName: "Loading Dock",
       lastActivity: "1 hour ago",
     },
     {
@@ -86,6 +129,7 @@ export function MapView() {
       lng: -74.0445,
       status: "online",
       location: "Reception Area",
+      locationName: "Reception Area",
       lastActivity: "30 sec ago",
     },
     {
@@ -95,15 +139,90 @@ export function MapView() {
       lng: -73.9712,
       status: "alert",
       location: "Corridor B",
+      locationName: "Corridor B",
       lastActivity: "3 min ago",
     },
+    {
+      id: "7",
+      name: "Camera 07",
+      lat: 40.7306,
+      lng: -73.9352,
+      status: "online",
+      location: "Sector 62",
+      locationName: "Sector 62",
+      lastActivity: "4 min ago",
+    },
+    {
+      id: "8",
+      name: "Camera 08",
+      lat: 40.7206,
+      lng: -73.9252,
+      status: "online",
+      location: "Sector 62",
+      locationName: "Sector 62",
+      lastActivity: "Just now",
+    },
+    {
+      id: "9",
+      name: "Camera 09",
+      lat: 40.7150,
+      lng: -73.9850,
+      status: "online",
+      location: "Delhi Gate",
+      locationName: "Delhi Gate",
+      lastActivity: "10 min ago",
+    },
+    {
+      id: "10",
+      name: "Camera 10",
+      lat: 40.7450,
+      lng: -73.9750,
+      status: "online",
+      location: "North Wing",
+      locationName: "North Wing",
+      lastActivity: "8 min ago",
+    },
+    {
+      id: "11",
+      name: "Camera 11",
+      lat: 40.7600,
+      lng: -73.9800,
+      status: "online",
+      location: "Parking Lot A",
+      locationName: "Parking Lot A",
+      lastActivity: "12 min ago",
+    },
   ]
+
+  // Automatically select camera if there is exactly 1 match for search query
+  useEffect(() => {
+    const query = searchQuery.trim().toLowerCase()
+    if (!query) {
+      return
+    }
+
+    const matches = cameras.filter((camera) => {
+      const matchesStatus = filterStatus === "all" || camera.status === filterStatus
+      const matchesSearch =
+        camera.name.toLowerCase().includes(query) ||
+        camera.location.toLowerCase().includes(query) ||
+        camera.locationName.toLowerCase().includes(query)
+      return matchesStatus && matchesSearch
+    })
+
+    if (matches.length === 1) {
+      setSelectedCamera(matches[0])
+    } else {
+      setSelectedCamera(null)
+    }
+  }, [searchQuery, filterStatus])
 
   const filteredCameras = cameras.filter((camera) => {
     const matchesStatus = filterStatus === "all" || camera.status === filterStatus
     const matchesSearch =
       camera.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      camera.location.toLowerCase().includes(searchQuery.toLowerCase())
+      camera.location.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      camera.locationName.toLowerCase().includes(searchQuery.toLowerCase())
     return matchesStatus && matchesSearch
   })
 
@@ -123,21 +242,62 @@ export function MapView() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold text-foreground">Camera Map View</h1>
           <p className="text-muted-foreground">Monitor all surveillance cameras in real-time</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Camera Search */}
           <div className="flex items-center gap-2">
             <Search className="w-4 h-4 text-muted-foreground" />
             <Input
               placeholder="Search cameras..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-64"
+              className="w-48"
             />
           </div>
+
+          {/* Address Search */}
+          <div className="flex items-center gap-2">
+            <MapPin className="w-4 h-4 text-emerald-500 animate-bounce" />
+            <div className="relative flex items-center">
+              <Input
+                placeholder="Search address..."
+                value={addressQuery}
+                onChange={(e) => setAddressQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    void handleAddressSearch()
+                  }
+                }}
+                className="w-48 pr-6"
+              />
+              {addressQuery && (
+                <button
+                  type="button"
+                  className="absolute right-2 text-muted-foreground hover:text-foreground"
+                  onClick={() => {
+                    setAddressQuery("")
+                    setSearchedLocation(null)
+                  }}
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => void handleAddressSearch()}
+              disabled={isSearchingAddress}
+            >
+              {isSearchingAddress ? "..." : "Go"}
+            </Button>
+          </div>
+
+          {/* Status Filter */}
           <Select value={filterStatus} onValueChange={setFilterStatus}>
             <SelectTrigger className="w-32">
               <SelectValue />
@@ -168,6 +328,8 @@ export function MapView() {
                   cameras={filteredCameras}
                   selectedCamera={selectedCamera}
                   onSelectCamera={setSelectedCamera}
+                  searchQuery={searchQuery}
+                  searchedLocation={searchedLocation}
                 />
               </div>
             </CardContent>
